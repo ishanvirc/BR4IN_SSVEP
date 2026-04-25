@@ -1,0 +1,12 @@
+numpy
+scipy
+pandas
+matplotlib
+seaborn
+scikit-learn
+mne
+mne-features
+jupyter
+jupyterlab
+tqdm
+pytest

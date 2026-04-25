@@ -1,0 +1,19 @@
+name: br41n-ssvep
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - seaborn
+  - scikit-learn
+  - mne
+  - jupyter
+  - jupyterlab
+  - tqdm
+  - pytest
+  - pip
+  - pip:
+      - mne-features
