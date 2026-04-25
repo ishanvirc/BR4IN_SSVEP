@@ -13,6 +13,44 @@ import numpy as np
 
 import mne
 
+# Stage 02 recommended preprocessing presets.
+# Default is the 3-second fast setting for real-time / ITR-oriented testing.
+# Other window lengths are included for comparison and robustness checks.
+# Full rationale and scan results are in notebooks/02_preprocessing.ipynb.
+
+PREPROCESSING_PRESETS = {
+    "default_3s": {
+        "notch_freqs": (50.0,),
+        "bandpass_range": (3.0, 45.0),
+        "tmin": 0.25,
+        "tmax": 3.25,
+    },
+    "fast_2s": {
+        "notch_freqs": (50.0,),
+        "bandpass_range": (1.0, 45.0),
+        "tmin": 0.5,
+        "tmax": 2.5,
+    },
+    "short_4s": {
+        "notch_freqs": (50.0,),
+        "bandpass_range": (3.0, 30.0),
+        "tmin": 0.0,
+        "tmax": 4.0,
+    },
+    "balanced_5s": {
+        "notch_freqs": (50.0,),
+        "bandpass_range": (3.0, 30.0),
+        "tmin": 0.25,
+        "tmax": 5.25,
+    },
+    "robust_6s": {
+        "notch_freqs": (50.0,),
+        "bandpass_range": (3.0, 30.0),
+        "tmin": 0.0,
+        "tmax": 6.0,
+    },
+}
+
 
 def filter_continuous(
     continuous: np.ndarray,
