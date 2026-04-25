@@ -1,19 +1,315 @@
 """Loaders for hackathon SSVEP `.mat` recordings.
 
-The exact key names used by g.tec MATLAB exports are not known until the
-dataset drops at kickoff. `load_mat` therefore tries a list of candidate
-keys for each canonical field. **Edit the candidate lists below once the
-real dataset structure is confirmed** — there is one tuple per field at
-module top so the change is a one-liner.
+The hackathon files are **continuous** g.tec recordings: each `.mat`
+contains a single ``y`` key holding a ``(11, n_samples)`` float64 matrix
+plus a scalar ``fs`` key. Channels are layered as:
+
+    CH1   (idx 0): sample time (seconds since recording start)
+    CH2-9 (idx 1-8): EEG — PO7, PO3, POz, PO4, PO8, O1, Oz, O2
+    CH10  (idx 9):  trigger — 0 when stim off, else stim freq in Hz
+    CH11  (idx 10): g.tec live LDA classifier output (descending mapping;
+                    see ``CH11_DESCENDING_MAP``)
+
+`load_mat` epochs a single file via CH10 transitions; `load_all` does the
+same across every matching file in ``data/raw/`` and assigns block IDs
+per file for cross-file LOBO-CV.
+
+The previous epoched-with-labels schema is preserved as
+:func:`load_mat_legacy` (deprecated) for any caller that still needs it.
 """
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import scipy.io as sio
+
+
+STIM_FREQS: tuple[float, ...] = (9.0, 10.0, 12.0, 15.0)
+CH_NAMES: tuple[str, ...] = (
+    "PO7", "PO3", "POz", "PO4", "PO8", "O1", "Oz", "O2",
+)
+CH11_DESCENDING_MAP: dict[float, float] = {1.0: 15.0, 2.0: 12.0, 3.0: 10.0, 4.0: 9.0}
+DEFAULT_DATA_DIR = Path("data/raw")
+DEFAULT_GLOB = "subject_*_fvep_led_training_*.mat"
+
+# Channel indices (0-based) into the (11, n_samples) continuous matrix.
+_EEG_SLICE = slice(1, 9)   # CH2..CH9
+_TRIGGER_IDX = 9            # CH10
+_LDA_IDX = 10               # CH11
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def load_mat(
+    path: str | Path,
+    window_s: float = 3.0,
+    latency_s: float = 0.14,
+    ch11_window_samples: int = 100,
+) -> dict:
+    """Load a g.tec continuous-format SSVEP `.mat` file and epoch it.
+
+    Parameters
+    ----------
+    path : str | Path
+        Path to a single `.mat` file with ``{'fs': int, 'y': (11, N) float}``.
+    window_s : float, default 3.0
+        Length of the per-trial analysis window, in seconds.
+    latency_s : float, default 0.14
+        Offset from stim onset before the analysis window starts (Chen 2015's
+        visual-latency convention).
+    ch11_window_samples : int, default 100
+        Number of samples at the end of each trial's stim period to consider
+        when extracting CH11's per-trial prediction (majority vote over
+        nonzero values). 100 samples ≈ 0.39 s @ 256 Hz.
+
+    Returns
+    -------
+    dict with keys:
+        X           : (n_trials, 8, round(window_s * fs)) float64 — EEG
+        y           : (n_trials,) int64 — class index 0..3 into ``STIM_FREQS``
+        fs          : float
+        stim_freqs  : (4,) float64 — np.array(STIM_FREQS)
+        ch_names    : list[str] — list(CH_NAMES)
+        blocks      : (n_trials,) int64 — all zeros for a single-file load
+        ch11_pred   : (n_trials,) int64 — class index 0..3, or -1 if CH11
+                      did not fire in the trial-end window
+        raw         : {'continuous': (11, N) ndarray, 'source': filename}
+    """
+    path = Path(path)
+    continuous = _load_continuous(path)
+    fs = _read_fs(path)
+
+    trigger = continuous[_TRIGGER_IDX]
+    onsets_offsets = _find_trial_onsets_and_offsets(trigger)
+    if not onsets_offsets:
+        raise ValueError(
+            f"No trials found in {path.name}: CH10 has no nonzero transitions."
+        )
+
+    X, kept = _epoch_eeg(continuous, onsets_offsets, fs, window_s, latency_s)
+    y = np.array(
+        [STIM_FREQS.index(float(onsets_offsets[i][2])) for i in kept],
+        dtype=np.int64,
+    )
+    ch11_pred = _ch11_predictions(
+        continuous,
+        [onsets_offsets[i] for i in kept],
+        ch11_window_samples,
+    )
+    blocks = np.zeros(len(kept), dtype=np.int64)
+
+    return {
+        "X": X,
+        "y": y,
+        "fs": fs,
+        "stim_freqs": np.array(STIM_FREQS, dtype=np.float64),
+        "ch_names": list(CH_NAMES),
+        "blocks": blocks,
+        "ch11_pred": ch11_pred,
+        "raw": {"continuous": continuous, "source": path.name},
+    }
+
+
+def load_all(
+    directory: str | Path = DEFAULT_DATA_DIR,
+    window_s: float = 3.0,
+    latency_s: float = 0.14,
+    ch11_window_samples: int = 100,
+    glob: str = DEFAULT_GLOB,
+) -> dict:
+    """Load every matching `.mat` file in ``directory`` and concatenate.
+
+    Same return schema as :func:`load_mat`, but ``blocks[i]`` carries the
+    file index (sorted alphabetically) so leave-one-block-out CV folds
+    across files. ``raw`` is replaced by per-file lists.
+
+    Raises
+    ------
+    FileNotFoundError
+        If no files match ``glob`` under ``directory``.
+    """
+    directory = Path(directory)
+    files = sorted(directory.glob(glob))
+    if not files:
+        raise FileNotFoundError(
+            f"No files matching '{glob}' under {directory.resolve()}"
+        )
+
+    Xs, ys, blocks_list, ch11s = [], [], [], []
+    sources: list[str] = []
+    continuous_per_file: list[np.ndarray] = []
+    fs_seen: float | None = None
+
+    for block_id, path in enumerate(files):
+        ds = load_mat(
+            path,
+            window_s=window_s,
+            latency_s=latency_s,
+            ch11_window_samples=ch11_window_samples,
+        )
+        if fs_seen is None:
+            fs_seen = ds["fs"]
+        elif ds["fs"] != fs_seen:
+            raise ValueError(
+                f"Sample rate mismatch: {path.name} fs={ds['fs']} vs prior fs={fs_seen}"
+            )
+
+        Xs.append(ds["X"])
+        ys.append(ds["y"])
+        ch11s.append(ds["ch11_pred"])
+        blocks_list.append(np.full(ds["y"].size, block_id, dtype=np.int64))
+        sources.append(path.name)
+        continuous_per_file.append(ds["raw"]["continuous"])
+
+    return {
+        "X": np.concatenate(Xs, axis=0),
+        "y": np.concatenate(ys, axis=0),
+        "fs": float(fs_seen),
+        "stim_freqs": np.array(STIM_FREQS, dtype=np.float64),
+        "ch_names": list(CH_NAMES),
+        "blocks": np.concatenate(blocks_list, axis=0),
+        "ch11_pred": np.concatenate(ch11s, axis=0),
+        "raw": {"sources": sources, "continuous_per_file": continuous_per_file},
+    }
+
+
+def load_mat_legacy(path: str | Path) -> dict:
+    """Deprecated: the pre-hackathon loader for epoched-with-labels `.mat` files.
+
+    Use :func:`load_mat` for the actual hackathon files (continuous, no
+    label key). This function is preserved only for callers that depended
+    on the old key-search behavior.
+    """
+    warnings.warn(
+        "load_mat_legacy is deprecated; use load_mat for the hackathon "
+        "continuous schema or call scipy.io.loadmat directly for arbitrary files.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return _load_mat_legacy_impl(path)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers (continuous-schema path)
+# ---------------------------------------------------------------------------
+
+
+def _load_continuous(path: Path) -> np.ndarray:
+    """Load the (11, N) continuous matrix from a hackathon `.mat` file."""
+    mat = sio.loadmat(path, squeeze_me=True, simplify_cells=True)
+    flat = _strip_meta(mat)
+    if "y" not in flat:
+        raise KeyError(
+            f"{path.name}: expected key 'y' holding (11, N) continuous data; "
+            f"found {sorted(flat.keys())}. If this is a different schema, "
+            f"see load_mat_legacy."
+        )
+    arr = np.asarray(flat["y"], dtype=np.float64)
+    if arr.ndim != 2 or 11 not in arr.shape:
+        raise ValueError(
+            f"{path.name}: expected 2D array with one axis of length 11; got shape {arr.shape}."
+        )
+    if arr.shape[0] != 11:
+        arr = arr.T
+    return arr
+
+
+def _read_fs(path: Path) -> float:
+    mat = sio.loadmat(path, squeeze_me=True, simplify_cells=True)
+    flat = _strip_meta(mat)
+    if "fs" not in flat:
+        raise KeyError(f"{path.name}: missing 'fs' key.")
+    return float(np.asarray(flat["fs"]).reshape(-1)[0])
+
+
+def _find_trial_onsets_and_offsets(
+    trigger: np.ndarray,
+) -> list[tuple[int, int, float]]:
+    """Return ``[(onset_idx, offset_idx_exclusive, freq_at_onset), ...]``.
+
+    Uses the same trick as ``trials_from_trigger`` in notebook 01: diff
+    the (trigger != 0) mask with prepend/append 0, locate ±1 transitions.
+    """
+    diff = np.diff((trigger != 0).astype(np.int8), prepend=0, append=0)
+    starts = np.where(diff == 1)[0]
+    ends = np.where(diff == -1)[0]
+    return [
+        (int(s), int(e), float(trigger[s])) for s, e in zip(starts, ends)
+    ]
+
+
+def _epoch_eeg(
+    continuous: np.ndarray,
+    onsets_offsets: list[tuple[int, int, float]],
+    fs: float,
+    window_s: float,
+    latency_s: float,
+) -> tuple[np.ndarray, list[int]]:
+    """Slice EEG into trials. Returns (X, kept_indices).
+
+    ``kept_indices`` indexes back into ``onsets_offsets`` so labels and
+    CH11 predictions stay aligned with the trials we actually emitted.
+    """
+    n_window = int(round(window_s * fs))
+    latency_n = int(round(latency_s * fs))
+    epochs: list[np.ndarray] = []
+    kept: list[int] = []
+    for i, (onset, offset, _freq) in enumerate(onsets_offsets):
+        start = onset + latency_n
+        end = start + n_window
+        if end > offset:
+            # Trial is shorter than (latency + window) — skip rather than pad.
+            continue
+        epochs.append(continuous[_EEG_SLICE, start:end])
+        kept.append(i)
+    if not epochs:
+        return (
+            np.zeros((0, _EEG_SLICE.stop - _EEG_SLICE.start, n_window), dtype=np.float64),
+            [],
+        )
+    return np.stack(epochs, axis=0).astype(np.float64, copy=False), kept
+
+
+def _ch11_predictions(
+    continuous: np.ndarray,
+    onsets_offsets: list[tuple[int, int, float]],
+    ch11_window_samples: int,
+) -> np.ndarray:
+    """Per-trial CH11 majority-vote prediction in ``[0..3]`` or ``-1``."""
+    lda = continuous[_LDA_IDX]
+    out = np.full(len(onsets_offsets), -1, dtype=np.int64)
+    for i, (onset, offset, _freq) in enumerate(onsets_offsets):
+        trial_len = offset - onset
+        w = min(ch11_window_samples, trial_len)
+        if w <= 0:
+            continue
+        window = lda[offset - w:offset]
+        nonzero = window[window != 0]
+        if nonzero.size == 0:
+            continue
+        vals, counts = np.unique(nonzero, return_counts=True)
+        majority_class = float(vals[np.argmax(counts)])
+        freq = CH11_DESCENDING_MAP.get(majority_class, -1.0)
+        if freq < 0:
+            continue
+        try:
+            out[i] = STIM_FREQS.index(float(freq))
+        except ValueError:
+            # CH11 produced a value we can't map; leave as -1.
+            continue
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Legacy (epoched-with-labels) loader — preserved for back-compat
+# ---------------------------------------------------------------------------
 
 
 _X_KEYS = ("X", "data", "EEG", "trials", "epochs", "signal")
@@ -32,7 +328,6 @@ _BLOCK_KEYS = ("blocks", "block", "session", "run", "fold")
 
 
 def _first_present(d: dict, candidates: tuple[str, ...]) -> tuple[str, Any] | None:
-    """Return (key, value) for the first candidate key found in d, else None."""
     for k in candidates:
         if k in d:
             return k, d[k]
@@ -40,29 +335,18 @@ def _first_present(d: dict, candidates: tuple[str, ...]) -> tuple[str, Any] | No
 
 
 def _strip_meta(d: dict) -> dict:
-    """Drop scipy.io's ``__header__`` / ``__version__`` / ``__globals__`` entries."""
     return {k: v for k, v in d.items() if not (isinstance(k, str) and k.startswith("__"))}
 
 
 def _to_3d(arr: np.ndarray) -> np.ndarray:
-    """Normalize EEG array to (n_trials, n_channels, n_samples).
-
-    g.tec exports often come as (n_channels, n_samples) for continuous data
-    or (n_channels, n_samples, n_trials) for epoched data — the channel
-    axis is usually the smallest. We sort axes by size, smallest first,
-    then promote 2D inputs to a single trial.
-    """
     arr = np.asarray(arr)
     if arr.ndim == 2:
-        # (n_channels, n_samples) → single-trial view
         return arr[np.newaxis, ...]
     if arr.ndim != 3:
         raise ValueError(
             f"Expected 2D or 3D array for X, got shape {arr.shape}. "
-            "Reshape upstream or adjust io.load_mat."
+            "Reshape upstream or adjust io.load_mat_legacy."
         )
-    # Heuristic: channel axis is the smallest; trial axis is one of the two
-    # remaining. We assume samples > trials (typical for SSVEP windows >= 1s).
     sizes = arr.shape
     ch_axis = int(np.argmin(sizes))
     other = [i for i in range(3) if i != ch_axis]
@@ -71,30 +355,11 @@ def _to_3d(arr: np.ndarray) -> np.ndarray:
     return np.transpose(arr, (trial_axis, ch_axis, samp_axis))
 
 
-def load_mat(path: str | Path) -> dict:
-    """Load a g.tec-style SSVEP `.mat` file into a typed dict.
-
-    Returns a dict with these keys (None if the source did not provide it):
-
-        X           : ndarray, shape (n_trials, n_channels, n_samples)
-        y           : ndarray, shape (n_trials,), int labels
-        fs          : float, sampling rate in Hz
-        stim_freqs  : ndarray, shape (n_classes,), candidate frequencies (Hz)
-        ch_names    : list[str] | None
-        blocks      : ndarray | None, shape (n_trials,) block id for LOBO CV
-        raw         : the underlying scipy.io.loadmat dict for fallback access
-
-    Robust to both flat-dict and struct-style `.mat` files via
-    ``simplify_cells=True``. If a required field cannot be located, raises
-    ``KeyError`` listing the actual top-level keys present in the file —
-    edit the ``_X_KEYS``/``_LABEL_KEYS``/etc. tuples at the top of this
-    module to teach the loader new key names.
-    """
+def _load_mat_legacy_impl(path: str | Path) -> dict:
     path = Path(path)
     mat = sio.loadmat(path, squeeze_me=True, struct_as_record=False, simplify_cells=True)
     flat = _strip_meta(mat)
 
-    # If the file is a single struct under one top-level name, descend into it.
     if len(flat) == 1:
         only_val = next(iter(flat.values()))
         if isinstance(only_val, dict):
@@ -114,7 +379,7 @@ def load_mat(path: str | Path) -> dict:
         raise KeyError(
             f"Could not locate required field(s) {missing} in {path.name}. "
             f"Top-level keys present: {sorted(flat.keys())}. "
-            f"Edit candidate-key tuples at the top of src/ssvep/io.py to teach the loader."
+            f"Edit candidate-key tuples in src/ssvep/io.py to teach the legacy loader."
         )
 
     _, X_raw = found_X
@@ -126,12 +391,11 @@ def load_mat(path: str | Path) -> dict:
     y = np.asarray(y_raw).astype(np.int64).reshape(-1)
 
     if y.size != X.shape[0]:
-        # Sometimes labels come per-channel or per-block — try squeezing first dim.
         y = np.squeeze(np.asarray(y_raw))
         if y.size != X.shape[0]:
             raise ValueError(
                 f"Label count ({y.size}) does not match trial count ({X.shape[0]}). "
-                f"Adjust io.load_mat to reconcile."
+                f"Adjust io.load_mat_legacy to reconcile."
             )
 
     fs = float(np.asarray(fs_raw).reshape(-1)[0])

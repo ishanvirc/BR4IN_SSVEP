@@ -10,9 +10,20 @@ the hackathon is worse than no test.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
+
+
+_DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "raw"
+_SAMPLE_FILE = _DATA_DIR / "subject_1_fvep_led_training_1.mat"
+
+
+@pytest.fixture
+def real_data_available():
+    if not _SAMPLE_FILE.exists():
+        pytest.skip(f"{_SAMPLE_FILE} not present; skipping real-data tests")
 
 
 def test_imports():
@@ -91,3 +102,45 @@ def test_lobo_cv_runs():
         assert math.isfinite(acc)
         assert 0.0 <= acc <= 1.0
     assert math.isfinite(result["mean"])
+
+
+# --- Real-data tests (skipped on machines without data/raw/) ---------------
+
+
+def test_load_mat_real_file(real_data_available):
+    """load_mat handles the continuous (11, N) hackathon schema."""
+    from ssvep.io import load_mat
+
+    ds = load_mat(_SAMPLE_FILE)
+    assert ds["X"].ndim == 3 and ds["X"].shape[1] == 8
+    assert ds["X"].shape[0] == ds["y"].size == ds["ch11_pred"].size
+    assert ds["y"].dtype == np.int64
+    assert set(np.unique(ds["y"]).tolist()) <= {0, 1, 2, 3}
+    assert ds["fs"] == 256.0
+    assert ds["ch11_pred"].dtype == np.int64
+    # CH11 sentinel allowed.
+    assert ds["ch11_pred"].min() >= -1
+    assert ds["ch11_pred"].max() <= 3
+
+
+def test_load_all_blocks(real_data_available):
+    """load_all() concatenates the 4 standard files with per-file block IDs."""
+    from ssvep.io import load_all
+
+    ds = load_all()
+    assert ds["X"].shape[0] == ds["y"].size == 80
+    assert set(np.unique(ds["blocks"]).tolist()) == {0, 1, 2, 3}
+
+
+def test_ch11_per_trial_accuracy_matches_notebook(real_data_available):
+    """Per-trial CH11 accuracy reproduces the notebook's 0.872 finding."""
+    from ssvep.io import load_all
+
+    ds = load_all()
+    fired = ds["ch11_pred"] >= 0
+    if fired.sum() == 0:
+        pytest.skip("CH11 never fired in any trial window; nothing to score")
+    acc = float((ds["ch11_pred"][fired] == ds["y"][fired]).mean())
+    assert 0.80 <= acc <= 0.95, (
+        f"per-trial CH11 accuracy {acc:.3f} outside expected band [0.80, 0.95]"
+    )
