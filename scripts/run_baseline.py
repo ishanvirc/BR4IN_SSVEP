@@ -29,7 +29,8 @@ from ssvep.synthetic import make_synthetic_dataset
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="SSVEP CCA baseline")
     src = p.add_mutually_exclusive_group(required=True)
-    src.add_argument("--mat", type=str, help="Path to .mat file in data/raw/")
+    src.add_argument("--mat", type=str,
+                     help="Path to a single .mat file, or a directory (loads all matching .mat files via load_all)")
     src.add_argument("--synthetic", action="store_true",
                      help="Generate synthetic SSVEP data instead of loading .mat")
 
@@ -51,8 +52,13 @@ def main() -> int:
         print("[load] generating synthetic dataset")
         ds = make_synthetic_dataset()
     else:
-        print(f"[load] {args.mat}")
-        ds = io.load_mat(args.mat)
+        mat_path = Path(args.mat)
+        if mat_path.is_dir():
+            print(f"[load] {mat_path} (directory -> load_all, cross-file LOBO)")
+            ds = io.load_all(mat_path)
+        else:
+            print(f"[load] {mat_path}")
+            ds = io.load_mat(mat_path)
 
     X = ds["X"]
     y = ds["y"]
