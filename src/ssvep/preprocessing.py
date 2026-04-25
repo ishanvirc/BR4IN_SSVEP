@@ -14,6 +14,63 @@ import numpy as np
 import mne
 
 
+def filter_continuous(
+    continuous: np.ndarray,
+    fs: float,
+    *,
+    l_freq: float | None = 3.0,
+    h_freq: float | None = 45.0,
+    notch_hz: float | None = 50.0,
+    verbose: bool = False,
+) -> np.ndarray:
+    """Apply notch + bandpass filtering to the continuous (11, N) hackathon matrix.
+
+    This is the methodologically correct preprocessing path for SSVEP:
+    filtering is done on the **continuous** signal, before epoching, so
+    every trial's start and end are clean rather than corrupted by FIR
+    edge transients (per VT's scan in notebooks/02_preprocessing.ipynb).
+
+    Parameters
+    ----------
+    continuous : ndarray, shape (11, N)
+        Hackathon-schema continuous matrix. Row 0 is sample time, rows 1-8
+        are EEG (PO7..O2), row 9 is the trigger (CH10), row 10 is the
+        live LDA output (CH11).
+    fs : float
+        Sampling rate (Hz).
+    l_freq, h_freq : float | None
+        Bandpass edges (Hz). Pass ``None`` on either side to make it
+        open. If both are ``None``, the bandpass step is skipped.
+    notch_hz : float | None
+        Notch frequency (Hz). ``None`` skips the notch step.
+    verbose : bool
+        Forwarded to MNE; defaults to False to keep test output clean.
+
+    Returns
+    -------
+    out : ndarray, shape (11, N)
+        New array. **Rows 0, 9, 10 (sample time, trigger, LDA) are
+        byte-identical to the input** — only rows 1-8 (EEG) are filtered.
+        Order of operations: notch first, then bandpass.
+    """
+    if continuous.ndim != 2 or continuous.shape[0] != 11:
+        raise ValueError(
+            f"filter_continuous expects a (11, N) matrix; got {continuous.shape}."
+        )
+    out = continuous.astype(np.float64, copy=True)
+    eeg = out[1:9].astype(np.float64, copy=True)
+    if notch_hz is not None:
+        eeg = mne.filter.notch_filter(
+            eeg, Fs=fs, freqs=np.array([notch_hz], dtype=np.float64), verbose=verbose
+        )
+    if l_freq is not None or h_freq is not None:
+        eeg = mne.filter.filter_data(
+            eeg, sfreq=fs, l_freq=l_freq, h_freq=h_freq, verbose=verbose
+        )
+    out[1:9] = eeg
+    return out
+
+
 def notch_filter(
     X: np.ndarray,
     fs: float,

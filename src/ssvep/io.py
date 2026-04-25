@@ -47,50 +47,91 @@ _LDA_IDX = 10               # CH11
 # ---------------------------------------------------------------------------
 
 
-def load_mat(
-    path: str | Path,
-    window_s: float = 3.0,
-    latency_s: float = 0.14,
-    ch11_window_samples: int = 100,
-) -> dict:
-    """Load a g.tec continuous-format SSVEP `.mat` file and epoch it.
+def load_continuous(path: str | Path) -> dict:
+    """Load a single hackathon `.mat` file as a raw continuous matrix.
 
-    Parameters
-    ----------
-    path : str | Path
-        Path to a single `.mat` file with ``{'fs': int, 'y': (11, N) float}``.
-    window_s : float, default 3.0
-        Length of the per-trial analysis window, in seconds.
-    latency_s : float, default 0.14
-        Offset from stim onset before the analysis window starts (Chen 2015's
-        visual-latency convention).
-    ch11_window_samples : int, default 100
-        Number of samples at the end of each trial's stim period to consider
-        when extracting CH11's per-trial prediction (majority vote over
-        nonzero values). 100 samples ≈ 0.39 s @ 256 Hz.
+    No filtering, no epoching. Useful when you want full control over the
+    pipeline (e.g. composing your own filter step, or analysing the
+    continuous signal directly).
 
     Returns
     -------
     dict with keys:
-        X           : (n_trials, 8, round(window_s * fs)) float64 — EEG
-        y           : (n_trials,) int64 — class index 0..3 into ``STIM_FREQS``
-        fs          : float
-        stim_freqs  : (4,) float64 — np.array(STIM_FREQS)
-        ch_names    : list[str] — list(CH_NAMES)
-        blocks      : (n_trials,) int64 — all zeros for a single-file load
-        ch11_pred   : (n_trials,) int64 — class index 0..3, or -1 if CH11
-                      did not fire in the trial-end window
-        raw         : {'continuous': (11, N) ndarray, 'source': filename}
+        continuous : (11, N) float64 — raw matrix from the .mat file
+        fs         : float — sampling rate
+        source     : str — filename (no path)
     """
     path = Path(path)
-    continuous = _load_continuous(path)
+    cont = _load_continuous(path)
     fs = _read_fs(path)
+    return {"continuous": cont, "fs": fs, "source": path.name}
 
+
+def load_continuous_all(
+    directory: str | Path = DEFAULT_DATA_DIR,
+    glob: str = DEFAULT_GLOB,
+) -> list[dict]:
+    """Load every matching `.mat` file as raw continuous dicts (sorted).
+
+    Returns a list of per-file dicts in sorted order. Each dict has the
+    same shape as :func:`load_continuous`'s return.
+
+    Raises
+    ------
+    FileNotFoundError
+        If no files match ``glob`` under ``directory``.
+    """
+    directory = Path(directory)
+    files = sorted(directory.glob(glob))
+    if not files:
+        raise FileNotFoundError(
+            f"No files matching '{glob}' under {directory.resolve()}"
+        )
+    return [load_continuous(p) for p in files]
+
+
+def epoch_trials(
+    continuous: np.ndarray,
+    fs: float,
+    *,
+    window_s: float = 3.0,
+    latency_s: float = 0.14,
+    ch11_window_samples: int = 100,
+    source: str = "",
+    block_id: int = 0,
+) -> dict:
+    """Epoch a (11, N) continuous matrix into per-trial EEG + labels + CH11 preds.
+
+    Operates on whatever matrix is passed — filtered or not, this function
+    doesn't care. Returns the canonical dataset dict shape (same as
+    :func:`load_mat`).
+
+    Parameters
+    ----------
+    continuous : ndarray, shape (11, N)
+    fs : float
+    window_s : float, default 3.0
+        Length of per-trial analysis window (s).
+    latency_s : float, default 0.14
+        Offset from stim onset to window start (Chen 2015 convention).
+    ch11_window_samples : int, default 100
+        Last-N-samples window over which CH11 is majority-voted.
+    source : str
+        Filename to record under ``raw['source']``. Defaults to "".
+    block_id : int
+        Value to fill the ``blocks`` array with. Defaults to 0;
+        :func:`load_all` overrides per file.
+    """
+    if continuous.ndim != 2 or continuous.shape[0] != 11:
+        raise ValueError(
+            f"epoch_trials expects a (11, N) matrix; got {continuous.shape}."
+        )
     trigger = continuous[_TRIGGER_IDX]
     onsets_offsets = _find_trial_onsets_and_offsets(trigger)
     if not onsets_offsets:
         raise ValueError(
-            f"No trials found in {path.name}: CH10 has no nonzero transitions."
+            f"No trials found{f' in {source}' if source else ''}: "
+            "CH10 has no nonzero transitions."
         )
 
     X, kept = _epoch_eeg(continuous, onsets_offsets, fs, window_s, latency_s)
@@ -103,18 +144,84 @@ def load_mat(
         [onsets_offsets[i] for i in kept],
         ch11_window_samples,
     )
-    blocks = np.zeros(len(kept), dtype=np.int64)
-
+    blocks = np.full(len(kept), block_id, dtype=np.int64)
     return {
         "X": X,
         "y": y,
-        "fs": fs,
+        "fs": float(fs),
         "stim_freqs": np.array(STIM_FREQS, dtype=np.float64),
         "ch_names": list(CH_NAMES),
         "blocks": blocks,
         "ch11_pred": ch11_pred,
-        "raw": {"continuous": continuous, "source": path.name},
+        "raw": {"continuous": continuous, "source": source},
     }
+
+
+def load_mat(
+    path: str | Path,
+    window_s: float = 3.0,
+    latency_s: float = 0.14,
+    ch11_window_samples: int = 100,
+    *,
+    l_freq: float | None = 3.0,
+    h_freq: float | None = 45.0,
+    notch_hz: float | None = 50.0,
+    filter: bool = True,
+) -> dict:
+    """Load a g.tec continuous SSVEP `.mat` file and return canonical-preprocessed epochs.
+
+    By default returns 3-45 Hz bandpass + 50 Hz notch filtering applied
+    to the continuous signal **before** epoching, per VT's scan in
+    `notebooks/02_preprocessing.ipynb`. Continuous-first filtering avoids
+    per-epoch FIR edge artifacts at the start and end of every trial.
+
+    Pass ``filter=False`` for raw epoched output — useful as a sanity
+    baseline or for debugging, not for analysis.
+
+    Parameters
+    ----------
+    path : str | Path
+        Path to a `.mat` file with ``{'fs': int, 'y': (11, N) float}``.
+    window_s : float, default 3.0
+    latency_s : float, default 0.14
+    ch11_window_samples : int, default 100
+    l_freq, h_freq : float | None, default (3.0, 45.0)
+        Bandpass edges (Hz). Ignored when ``filter=False``.
+    notch_hz : float | None, default 50.0
+        Notch frequency (Hz). Ignored when ``filter=False``.
+    filter : bool, default True
+        Master switch — short-circuits all 3 filter params when False.
+
+    Returns
+    -------
+    dict with keys:
+        X           : (n_trials, 8, round(window_s * fs)) float64 — EEG
+        y           : (n_trials,) int64 — class index 0..3 into ``STIM_FREQS``
+        fs          : float
+        stim_freqs  : (4,) float64 — np.array(STIM_FREQS)
+        ch_names    : list[str] — list(CH_NAMES)
+        blocks      : (n_trials,) int64 — all zeros for a single-file load
+        ch11_pred   : (n_trials,) int64 — class index 0..3, or -1 if CH11
+                      did not fire in the trial-end window
+        raw         : {'continuous': (11, N) ndarray (post-filter if applied),
+                       'source': filename}
+    """
+    ds = load_continuous(path)
+    cont = ds["continuous"]
+    if filter:
+        from .preprocessing import filter_continuous
+        cont = filter_continuous(
+            cont, ds["fs"], l_freq=l_freq, h_freq=h_freq, notch_hz=notch_hz
+        )
+    return epoch_trials(
+        cont,
+        ds["fs"],
+        window_s=window_s,
+        latency_s=latency_s,
+        ch11_window_samples=ch11_window_samples,
+        source=ds["source"],
+        block_id=0,
+    )
 
 
 def load_all(
@@ -123,12 +230,20 @@ def load_all(
     latency_s: float = 0.14,
     ch11_window_samples: int = 100,
     glob: str = DEFAULT_GLOB,
+    *,
+    l_freq: float | None = 3.0,
+    h_freq: float | None = 45.0,
+    notch_hz: float | None = 50.0,
+    filter: bool = True,
 ) -> dict:
-    """Load every matching `.mat` file in ``directory`` and concatenate.
+    """Load every matching `.mat` file under ``directory`` and concatenate.
 
-    Same return schema as :func:`load_mat`, but ``blocks[i]`` carries the
-    file index (sorted alphabetically) so leave-one-block-out CV folds
-    across files. ``raw`` is replaced by per-file lists.
+    Defaults match :func:`load_mat`: continuous-first canonical
+    preprocessing applied per file. Pass ``filter=False`` for raw
+    epoched output.
+
+    Block IDs are assigned per file (sorted) so leave-one-block-out CV
+    folds across files.
 
     Raises
     ------
@@ -153,6 +268,10 @@ def load_all(
             window_s=window_s,
             latency_s=latency_s,
             ch11_window_samples=ch11_window_samples,
+            l_freq=l_freq,
+            h_freq=h_freq,
+            notch_hz=notch_hz,
+            filter=filter,
         )
         if fs_seen is None:
             fs_seen = ds["fs"]
@@ -164,6 +283,7 @@ def load_all(
         Xs.append(ds["X"])
         ys.append(ds["y"])
         ch11s.append(ds["ch11_pred"])
+        # Override block_id (load_mat returns 0); use file index here.
         blocks_list.append(np.full(ds["y"].size, block_id, dtype=np.int64))
         sources.append(path.name)
         continuous_per_file.append(ds["raw"]["continuous"])

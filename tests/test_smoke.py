@@ -144,3 +144,76 @@ def test_ch11_per_trial_accuracy_matches_notebook(real_data_available):
     assert 0.80 <= acc <= 0.95, (
         f"per-trial CH11 accuracy {acc:.3f} outside expected band [0.80, 0.95]"
     )
+
+
+# --- Continuous-first preprocessing tests ----------------------------------
+
+
+def test_load_continuous_shape(real_data_available):
+    """load_continuous returns the raw (11, N) matrix + fs + source."""
+    from ssvep.io import load_continuous
+
+    d = load_continuous(_SAMPLE_FILE)
+    assert d["continuous"].shape[0] == 11
+    assert d["continuous"].shape[1] > 50_000   # ~57728 for hackathon files
+    assert d["fs"] == 256.0
+    assert d["source"] == _SAMPLE_FILE.name
+
+
+def test_filter_continuous_preserves_non_eeg():
+    """filter_continuous touches only rows 1:9 (EEG); rows 0/9/10 unchanged."""
+    from ssvep.preprocessing import filter_continuous
+
+    rng = np.random.default_rng(0)
+    cont = rng.standard_normal((11, 1024))
+    out = filter_continuous(
+        cont, fs=256.0, l_freq=3.0, h_freq=45.0, notch_hz=50.0
+    )
+    assert out.shape == cont.shape
+    np.testing.assert_array_equal(out[0],  cont[0])    # CH1 sample time
+    np.testing.assert_array_equal(out[9],  cont[9])    # CH10 trigger
+    np.testing.assert_array_equal(out[10], cont[10])   # CH11 LDA
+    assert not np.array_equal(out[1:9], cont[1:9])     # EEG rows changed
+
+
+def test_load_mat_with_filters_reproduces_vt(real_data_available):
+    """Continuous-first canonical preprocessing puts subject_1_training_1 in [0.85, 1.0]."""
+    from ssvep.io import load_mat
+    from ssvep.classifiers import CCAClassifier
+
+    ds = load_mat(
+        _SAMPLE_FILE,
+        window_s=3.0,
+        l_freq=3.0,
+        h_freq=45.0,
+        notch_hz=50.0,
+    )
+    clf = CCAClassifier(stim_freqs=ds["stim_freqs"], fs=ds["fs"])
+    clf.fit(ds["X"], ds["y"])
+    acc = clf.score(ds["X"], ds["y"])
+    assert 0.85 <= acc <= 1.0, (
+        f"CCA acc {acc:.3f} on subject_1_training_1 outside [0.85, 1.0]"
+    )
+
+
+def test_filter_then_epoch_equals_load_mat_with_filters(real_data_available):
+    """Composable path (load_continuous + filter_continuous + epoch_trials) is byte-equal to bundled load_mat."""
+    from ssvep.io import load_continuous, epoch_trials, load_mat
+    from ssvep.preprocessing import filter_continuous
+
+    c = load_continuous(_SAMPLE_FILE)
+    filtered = filter_continuous(
+        c["continuous"], c["fs"],
+        l_freq=3.0, h_freq=45.0, notch_hz=50.0,
+    )
+    manual = epoch_trials(
+        filtered, c["fs"], window_s=3.0, source=c["source"]
+    )
+    bundled = load_mat(
+        _SAMPLE_FILE,
+        window_s=3.0,
+        l_freq=3.0, h_freq=45.0, notch_hz=50.0,
+    )
+    np.testing.assert_allclose(manual["X"], bundled["X"], rtol=1e-9, atol=1e-9)
+    np.testing.assert_array_equal(manual["y"], bundled["y"])
+    np.testing.assert_array_equal(manual["ch11_pred"], bundled["ch11_pred"])
