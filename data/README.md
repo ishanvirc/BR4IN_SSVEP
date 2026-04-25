@@ -36,7 +36,7 @@ reference at right earlobe, ground at FPz.
 | CH8  | Oz (EEG) |
 | CH9  | O2 (EEG) |
 | CH10 | Trigger (stim freq in Hz; 0 when off) |
-| CH11 | LDA classifier output (status: see "CH11 status" below) |
+| CH11 | LDA classifier output (see "CH11 — g.tec LDA Classifier Output" below) |
 
 EEG channel order is the assumed g.tec montage; confirm against
 `montage.png` in this folder before relying on CH-name → physical
@@ -61,33 +61,50 @@ electrode pairings.
 Trial counts and timings inferred from CH10 transitions; see
 `notebooks/01_data_exploration.ipynb` cell 3.
 
-## CH11 status
+## CH11 — g.tec LDA Classifier Output
 
-CH11 is **most likely g.tec's live LDA classifier output, but with partial
-coverage and uneven per-subject performance.** Best aggregate accuracy
-across all 4 files (after a brute-force sweep over all 24 mappings of LDA
-class index → stim frequency) is **0.677**, on 48,402 scored samples
-(samples where stim is active *and* CH11 has fired). The recovered
-mapping is:
+CH11 contains g.tec's live LDA classifier predictions, recovered via
+permutation sweep over the 4! possible class-index → frequency mappings.
 
-```
-{1: 15 Hz, 2: 12 Hz, 3: 10 Hz, 4: 9 Hz}      # descending, not ascending
-```
+**Mapping (descending, not ascending):**
 
-Per-file accuracy varies dramatically:
+- Class 1 → 15 Hz
+- Class 2 → 12 Hz
+- Class 3 → 10 Hz
+- Class 4 → 9 Hz
 
-| File | Best-perm acc | n_scored |
+**Two accuracy numbers — both matter:**
+
+- **Per-sample accuracy: 0.677** across 48,402 scored samples (aggregate,
+  best permutation). This number is diluted by sticky/latched values
+  carrying forward across trials and by long no-fire stretches; it is
+  **not** a fair representation of CH11's quality as a per-trial classifier.
+- **Per-trial accuracy: 0.872** across 39 of 80 trials evaluated (last 100
+  samples per trial, majority vote, best-perm mapping). This is the
+  **BCI-relevant** number — one prediction per trial, mirroring how a real
+  speller would use CH11.
+
+**Coverage is the catch:** 41 of 80 trials (51%) have **no** LDA prediction
+in the last 100 samples of the trial. The classifier either does not fire
+on those trials, or fires earlier and the value is no longer in the window.
+See `notebooks/01_data_exploration.ipynb`, cell 13, for the per-file breakdown.
+
+**Per-file split (per-trial accuracy on evaluated trials):**
+
+| File | Per-trial acc | Skipped (no-fire) |
 |---|---|---|
-| subject_1_fvep_led_training_1 | 0.855 | 5,161 |
-| subject_1_fvep_led_training_2 | **0.961** | 5,355 |
-| subject_2_fvep_led_training_1 | 0.649 | 18,655 |
-| subject_2_fvep_led_training_2 | 0.576 | 19,231 |
+| subject_1_fvep_led_training_1 | 4/4 = **100.0%** | 16/20 |
+| subject_1_fvep_led_training_2 | 6/6 = **100.0%** | 14/20 |
+| subject_2_fvep_led_training_1 | 13/14 = **92.9%** | 6/20 |
+| subject_2_fvep_led_training_2 | 11/15 = **73.3%** | 5/20 |
 
-Subject 1's runs are near or at SOTA (Guger 2012 reports 95.5% mean across
-53 subjects); subject 2's are 30+ points lower. **Investigate latency
-offsets and per-trial firing windows (notebook cells 5–6) before treating
-CH11 as a SOTA reference.** Reproduce the analysis with
-`python scripts/verify_ch11.py`.
+**Strategic implication:** Subject 1 sessions are clean SOTA territory
+when CH11 fires; subject 2 sessions show the universality problem
+described in Guger et al. 2012. **Coverage and accuracy are both metrics
+worth comparing our methods against.**
+
+Reproduce with `python scripts/verify_ch11.py` (per-sample sweep) or
+`notebooks/01_data_exploration.ipynb` cell 13 (per-sample + per-trial).
 
 ## References
 
