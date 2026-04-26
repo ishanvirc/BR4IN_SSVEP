@@ -59,8 +59,20 @@ except (AttributeError, OSError):
 N_CLASSES = 4
 SUBJECT_OF_BLOCK: dict[int, int] = {0: 1, 1: 1, 2: 2, 3: 2}
 
+# Within-subject LOBO folds: each tuple is (train_block, test_block) for a
+# single subject. Order is subj 1 first, subj 2 second — print summary
+# slices [:2] and [2:] for per-subject means.
+WITHIN_SUBJECT_FOLDS: list[tuple[int, int]] = [
+    (0, 1),  # subj 1: train block 0, test block 1
+    (1, 0),  # subj 1: train block 1, test block 0
+    (2, 3),  # subj 2: train block 2, test block 3
+    (3, 2),  # subj 2: train block 3, test block 2
+]
+
 OUT_CSV = ROOT / "results" / "tables" / "comparison.csv"
 OUT_PNG = ROOT / "results" / "figures" / "comparison.png"
+OUT_CSV_WITHIN = ROOT / "results" / "tables" / "comparison_within_subject.csv"
+OUT_PNG_WITHIN = ROOT / "results" / "figures" / "comparison_within_subject.png"
 
 # ---------------------------------------------------------------------------
 # Per-classifier evaluation functions
@@ -90,6 +102,49 @@ def eval_cca_top4_nested(X, y, blocks, stim_freqs, fs, n_harmonics, ch_names):
         clf.fit(X_test, y[test_mask])
         per_block[b] = float(clf.score(X_test, y[test_mask]))
     accs = np.array(list(per_block.values()))
+    return {"per_block": per_block, "mean": float(accs.mean()), "std": float(accs.std())}
+
+
+def within_subject_lobo_cv(X, y, blocks, classifier_factory) -> dict:
+    """Within-subject 4-fold LOBO. Each fold trains on one block and tests
+    on the other block from the same subject (Nakanishi 2017 protocol).
+
+    Returns the same dict shape as ``leave_one_block_out_cv``:
+    ``{'per_block': {test_block_id: acc}, 'mean': float, 'std': float}``.
+    """
+    per_block: dict[int, float] = {}
+    for train_b, test_b in WITHIN_SUBJECT_FOLDS:
+        train_mask = blocks == train_b
+        test_mask = blocks == test_b
+        clf = classifier_factory()
+        clf.fit(X[train_mask], y[train_mask])
+        per_block[int(test_b)] = float(clf.score(X[test_mask], y[test_mask]))
+    accs = np.array(list(per_block.values()), dtype=np.float64)
+    return {
+        "per_block": per_block,
+        "mean": float(accs.mean()),
+        "std": float(accs.std()),
+    }
+
+
+def eval_cca_top4_within_subject(X, y, blocks, stim_freqs, fs, n_harmonics):
+    """CCA with per-fold SNR-ranked top-4 channels under within-subject LOBO.
+
+    Training is one block; ranking uses that block; test is the same
+    subject's other block. Channels never observed during ranking.
+    """
+    per_block: dict[int, float] = {}
+    for train_b, test_b in WITHIN_SUBJECT_FOLDS:
+        train_mask = blocks == train_b
+        test_mask = blocks == test_b
+        _, ranking = rank_channels_by_snr(X[train_mask], y[train_mask], fs, stim_freqs)
+        top4_idx = [int(i) for i in ranking[:4]]
+        X_train = X[train_mask][:, top4_idx, :]
+        X_test = X[test_mask][:, top4_idx, :]
+        clf = CCAClassifier(stim_freqs=stim_freqs, fs=fs, n_harmonics=n_harmonics)
+        clf.fit(X_train, y[train_mask])
+        per_block[int(test_b)] = float(clf.score(X_test, y[test_mask]))
+    accs = np.array(list(per_block.values()), dtype=np.float64)
     return {"per_block": per_block, "mean": float(accs.mean()), "std": float(accs.std())}
 
 
@@ -147,6 +202,14 @@ def main():
                         help="Number of CCA harmonics (default: 2)")
     parser.add_argument("--data-dir", type=str, default=str(ROOT / "data" / "raw"),
                         help="Path to data/raw directory")
+    parser.add_argument(
+        "--protocol",
+        choices=["cross_subject", "within_subject"],
+        default="cross_subject",
+        help=("Evaluation protocol: cross_subject (4-block LOBO across both "
+              "subjects, default) or within_subject (4 folds, train/test on "
+              "same subject's blocks per Nakanishi 2017)"),
+    )
     args = parser.parse_args()
 
     window_s = args.window
@@ -164,21 +227,55 @@ def main():
     # --- Run classifiers ---------------------------------------------------
     configs = []
 
-    print("\nCCA-8ch ...")
-    r = eval_cca_8ch(X, y, blocks, stim_freqs, fs, n_harmonics)
-    configs.append(("CCA-8ch", r))
+    if args.protocol == "cross_subject":
+        out_csv, out_png = OUT_CSV, OUT_PNG
+        top4_label = "CCA-top4-nested"
+        title_protocol = ""
 
-    print("CCA-top4-nested ...")
-    r = eval_cca_top4_nested(X, y, blocks, stim_freqs, fs, n_harmonics, ch_names)
-    configs.append(("CCA-top4-nested", r))
+        print("\nCCA-8ch ...")
+        r = eval_cca_8ch(X, y, blocks, stim_freqs, fs, n_harmonics)
+        configs.append(("CCA-8ch", r))
 
-    print("FBCCA ...")
-    r = eval_fbcca(X, y, blocks, stim_freqs, fs, n_harmonics)
-    configs.append(("FBCCA", r))
+        print(f"{top4_label} ...")
+        r = eval_cca_top4_nested(X, y, blocks, stim_freqs, fs, n_harmonics, ch_names)
+        configs.append((top4_label, r))
 
-    print("TRCA ...")
-    r = eval_trca(X, y, blocks, stim_freqs, fs)
-    configs.append(("TRCA", r))
+        print("FBCCA ...")
+        r = eval_fbcca(X, y, blocks, stim_freqs, fs, n_harmonics)
+        configs.append(("FBCCA", r))
+
+        print("TRCA ...")
+        r = eval_trca(X, y, blocks, stim_freqs, fs)
+        configs.append(("TRCA", r))
+    else:  # within_subject
+        out_csv, out_png = OUT_CSV_WITHIN, OUT_PNG_WITHIN
+        top4_label = "CCA-top4"
+        title_protocol = "within-subject LOBO, "
+
+        print("\nCCA-8ch (within-subject) ...")
+        cca_factory = lambda: CCAClassifier(stim_freqs=stim_freqs, fs=fs, n_harmonics=n_harmonics)
+        r = within_subject_lobo_cv(X, y, blocks, cca_factory)
+        configs.append(("CCA-8ch", r))
+
+        print(f"{top4_label} (within-subject) ...")
+        r = eval_cca_top4_within_subject(X, y, blocks, stim_freqs, fs, n_harmonics)
+        configs.append((top4_label, r))
+
+        print("FBCCA (within-subject) ...")
+        fbcca_factory = lambda: FBCCAClassifier(stim_freqs=stim_freqs, fs=fs, num_harmonics=n_harmonics)
+        try:
+            r = within_subject_lobo_cv(X, y, blocks, fbcca_factory)
+        except NotImplementedError:
+            r = None
+        configs.append(("FBCCA", r))
+
+        print("TRCA (within-subject) ...")
+        trca_factory = lambda: TRCAClassifier(stim_freqs=stim_freqs, fs=fs)
+        try:
+            r = within_subject_lobo_cv(X, y, blocks, trca_factory)
+        except NotImplementedError:
+            r = None
+        configs.append(("TRCA", r))
 
     print("CH11 (g.tec LDA) ...")
     r = eval_ch11(ds)
@@ -213,14 +310,28 @@ def main():
         rows.append({"classifier": name, "accuracy": f"{acc:.3f}", "std": std_str,
                      "itr_bpm": itr_str, "notes": notes})
 
+    # --- Per-subject means (within-subject only) ---------------------------
+    if args.protocol == "within_subject":
+        print()
+        print("Per-subject means:")
+        for name, res in configs:
+            if res is None or name == "CH11":
+                continue
+            # WITHIN_SUBJECT_FOLDS is ordered subj-1-first; dict insertion
+            # order preserves this in per_block.
+            accs_pb = list(res["per_block"].values())
+            s1 = float(np.mean(accs_pb[:2]))
+            s2 = float(np.mean(accs_pb[2:]))
+            print(f"  {name:18} subj 1 = {s1:.3f}    subj 2 = {s2:.3f}")
+
     # --- Save CSV ----------------------------------------------------------
-    OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
     import csv
-    with open(OUT_CSV, "w", newline="") as f:
+    with open(out_csv, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["classifier", "accuracy", "std", "itr_bpm", "notes"])
         writer.writeheader()
         writer.writerows(rows)
-    print(f"\nCSV saved: {OUT_CSV.relative_to(ROOT)}")
+    print(f"\nCSV saved: {out_csv.relative_to(ROOT)}")
 
     # --- Plot --------------------------------------------------------------
     implemented = [(n, r) for n, r in configs if r is not None]
@@ -260,12 +371,21 @@ def main():
         ax2.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.3,
                  label, ha="center", va="bottom", fontsize=9)
 
-    fig.suptitle(f"Classifier comparison — {window_s}s window, {n_harmonics} harmonics",
-                 fontsize=13, fontweight="bold")
+    fig.suptitle(
+        f"Classifier comparison — {title_protocol}{window_s}s window, {n_harmonics} harmonics",
+        fontsize=13, fontweight="bold",
+    )
     plt.tight_layout()
-    OUT_PNG.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(OUT_PNG, dpi=150, bbox_inches="tight")
-    print(f"Figure saved: {OUT_PNG.relative_to(ROOT)}")
+    if args.protocol == "within_subject":
+        fig.text(
+            0.5, 0.02,
+            "Train/test on same subject's blocks (Nakanishi 2017 protocol). "
+            "N=4 folds (2 per subject).",
+            ha="center", fontsize=8, style="italic",
+        )
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_png, dpi=150, bbox_inches="tight")
+    print(f"Figure saved: {out_png.relative_to(ROOT)}")
     plt.show()
 
 
