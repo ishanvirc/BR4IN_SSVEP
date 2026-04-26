@@ -298,3 +298,40 @@ def test_trca_lobo_real_data(real_data_available):
         f"TRCA LOBO mean {r['mean']:.3f} at or below chance (0.25); "
         "expected ~0.31 from prior measurement."
     )
+
+
+# --- FBCCA classifier ------------------------------------------------------
+
+
+def test_fbcca_runs_on_synthetic():
+    """Synthetic 4-class SSVEP — FBCCA should beat chance comfortably.
+
+    Unlike TRCA, FBCCA uses canonical sin/cos references (not learned
+    spatial filters), so the synthetic generator's per-trial phase
+    randomization is not hostile to FBCCA.
+    """
+    from ssvep.synthetic import make_synthetic_dataset
+    from ssvep.classifiers.fbcca import FBCCAClassifier
+
+    ds = make_synthetic_dataset(n_trials_per_class=15, seed=42)
+    X, y = ds["X"], ds["y"]
+    fs, stim_freqs = ds["fs"], ds["stim_freqs"]
+
+    clf = FBCCAClassifier(stim_freqs=stim_freqs, fs=fs)
+    clf.fit(X, y)
+    acc = clf.score(X, y)
+    assert acc > 0.75, f"FBCCA on synthetic scored {acc:.3f} — expect >0.75"
+
+
+def test_fbcca_lobo_real_data(real_data_available):
+    """LOBO-CV on real data — FBCCA should be competitive with CCA."""
+    from ssvep.io import load_all
+    from ssvep.classifiers.fbcca import FBCCAClassifier
+    from ssvep.evaluation import leave_one_block_out_cv
+
+    d = load_all(window_s=3.0)
+    factory = lambda: FBCCAClassifier(stim_freqs=d["stim_freqs"], fs=d["fs"])
+    r = leave_one_block_out_cv(d["X"], d["y"], d["blocks"], factory)
+    assert r["mean"] >= 0.65, (
+        f"FBCCA LOBO mean {r['mean']:.3f} below 0.65 floor — likely bug"
+    )
