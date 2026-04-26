@@ -5,7 +5,7 @@ Shared random seed for any stochastic operation across the team.
 
 RANDOM_SEED = 42
 
-from . import io, preprocessing, features, evaluation, viz, synthetic, classifiers
+from . import io, preprocessing, features, evaluation, viz, synthetic, classifiers, channel_selection
 
 __all__ = [
     "RANDOM_SEED",
@@ -16,4 +16,5 @@ __all__ = [
     "viz",
     "synthetic",
     "classifiers",
+    "channel_selection",
 ]
