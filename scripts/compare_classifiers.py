@@ -96,7 +96,7 @@ def eval_cca_top4_nested(X, y, blocks, stim_freqs, fs, n_harmonics, ch_names):
 def eval_fbcca(X, y, blocks, stim_freqs, fs, n_harmonics):
     """FBCCA — skips gracefully if stub."""
     def factory():
-        return FBCCAClassifier(stim_freqs=stim_freqs, fs=fs, n_harmonics=n_harmonics)
+        return FBCCAClassifier(stim_freqs=stim_freqs, fs=fs, num_harmonics=n_harmonics)
     try:
         return leave_one_block_out_cv(X, y, blocks, factory)
     except NotImplementedError:
@@ -262,6 +262,17 @@ def main():
 
     fig.suptitle(f"Classifier comparison — {window_s}s window, {n_harmonics} harmonics",
                  fontsize=13, fontweight="bold")
+
+    caption = (
+        "Error bars: ±1 SD over LOBO-CV folds (n=4).\n"
+        "CH11 (coral): accuracy on fired trials only (87.2%, 49% coverage; all-trial = 42.5%).\n"
+        "No error bar for CH11 (single observation).\n"
+        "CH11 ITR not defined (no prediction on 51% of trials)."
+    )
+    fig.text(0.5, -0.04, caption, ha="center", va="top", fontsize=8,
+             color="dimgray", wrap=True,
+             bbox=dict(boxstyle="round,pad=0.3", facecolor="lightyellow", alpha=0.6))
+
     plt.tight_layout()
     OUT_PNG.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(OUT_PNG, dpi=150, bbox_inches="tight")
