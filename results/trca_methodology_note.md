@@ -254,6 +254,29 @@ the trial counts and frequency spacing of the BR41N.IO 2026 paradigm,
 TRCA is not the indicated classifier. The paper does not promise
 otherwise.
 
+## FBCCA update (post-TRCA)
+
+After TRCA was evaluated, FBCCA (Chen et al. 2015) was implemented and
+run under identical LOBO-CV conditions (3.0 s window, 2 harmonics).
+
+| Classifier      | Accuracy | ITR (bpm) |
+|-----------------|----------|-----------|
+| FBCCA           | **95.0%**| 32.7      |
+| CH11 (SOTA)     | 87.2%    | —         |
+| CCA-top4-nested | 85.0%    | 23.0      |
+| CCA-8ch         | 83.8%    | 22.0      |
+| TRCA            | 31.2%    | 0.3       |
+
+FBCCA achieves **95.0%** — the highest accuracy of any classifier tested,
+including the live g.tec reference. The filter-bank decomposition extracts
+sub-band structure that plain CCA does not exploit, even on widely-spaced
+frequencies. This reverses the pre-implementation expectation that widely-
+spaced stimuli would leave no room for filter-bank gains. The result
+demonstrates that signal structure beyond the fundamental harmonic pair is
+present and decodable in this dataset.
+
+---
+
 ## Conclusion
 
 TRCA was implemented from a correctly-licensed verbatim port of the
