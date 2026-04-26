@@ -217,3 +217,84 @@ def test_filter_then_epoch_equals_load_mat_with_filters(real_data_available):
     np.testing.assert_allclose(manual["X"], bundled["X"], rtol=1e-9, atol=1e-9)
     np.testing.assert_array_equal(manual["y"], bundled["y"])
     np.testing.assert_array_equal(manual["ch11_pred"], bundled["ch11_pred"])
+
+
+# --- TRCA classifier -------------------------------------------------------
+
+
+def _trca_friendly_synthetic(n_trials_per_class=15, n_classes=4, n_chans=8,
+                             n_samples=768, fs=256.0, seed=42):
+    """Synthetic SSVEP that satisfies TRCA's reproducibility assumption.
+
+    The shared `make_synthetic_dataset` randomizes spatial pattern and
+    phase per trial — fine for CCA (matched-filter against canonical
+    sin/cos) but adversarial for TRCA (which needs inter-trial
+    reproducibility within each class). We generate per-class data with a
+    fixed spatial pattern + fixed phase across trials, plus per-trial
+    Gaussian noise.
+    """
+    rng = np.random.default_rng(seed)
+    stim_freqs = np.array([7.5, 8.57, 10.0, 12.0])[:n_classes]
+    t = np.arange(n_samples) / fs
+    spatial = rng.standard_normal((n_classes, n_chans))
+    spatial /= np.linalg.norm(spatial, axis=1, keepdims=True)
+    X = np.empty((n_classes * n_trials_per_class, n_chans, n_samples))
+    y = np.empty(n_classes * n_trials_per_class, dtype=np.int64)
+    k = 0
+    for c, f in enumerate(stim_freqs):
+        sig_t = np.cos(2 * np.pi * f * t) + 0.5 * np.cos(4 * np.pi * f * t)
+        sig = spatial[c][:, None] * sig_t[None, :]
+        for _ in range(n_trials_per_class):
+            X[k] = sig + 0.5 * rng.standard_normal(sig.shape)
+            y[k] = c
+            k += 1
+    return X, y, fs, stim_freqs
+
+
+def test_trca_runs_on_synthetic():
+    """Synthetic 4-class SSVEP with consistent per-class spatial+phase pattern.
+
+    NB: the shared `make_synthetic_dataset` is hostile to TRCA (randomizes
+    phase per trial). We generate inline data that respects TRCA's
+    reproducibility-within-class assumption.
+    """
+    from ssvep.classifiers.trca import TRCAClassifier
+
+    X, y, fs, stim_freqs = _trca_friendly_synthetic(n_trials_per_class=15, seed=42)
+
+    rng = np.random.default_rng(42)
+    perm = rng.permutation(len(y))
+    n_train = int(0.6 * len(y))
+    train_idx, test_idx = perm[:n_train], perm[n_train:]
+
+    clf = TRCAClassifier(stim_freqs=stim_freqs, fs=fs, ensemble=True)
+    clf.fit(X[train_idx], y[train_idx])
+    acc = clf.score(X[test_idx], y[test_idx])
+    assert acc > 0.5, f"TRCA on TRCA-friendly synthetic scored {acc:.3f} — expect >0.5"
+
+
+def test_trca_lobo_real_data(real_data_available):
+    """4-block LOBO on real hackathon data — TRCA above chance.
+
+    Empirical reality on this dataset: TRCA 4-block LOBO mean ≈ 0.31
+    (per-block ≈ {0.25, 0.30, 0.35, 0.35}), versus CCA's 0.838. The gap
+    is not a bug — within-block fit+score gives 1.00 and within-subject-1
+    LOBO (block 0 ↔ block 1, isolated) gives 0.65/0.70. Cross-subject
+    training in the standard 4-block LOBO destroys subject 1's accuracy
+    because the spatial filter is dominated by subject 2's noise. Floor
+    set just above the 0.25 chance threshold to verify the algorithm
+    runs and is not ranking randomly.
+    """
+    from ssvep.io import load_all
+    from ssvep.classifiers.trca import TRCAClassifier
+    from ssvep.evaluation import leave_one_block_out_cv
+
+    d = load_all(window_s=3.0)
+    factory = lambda: TRCAClassifier(
+        stim_freqs=d["stim_freqs"], fs=d["fs"], ensemble=True
+    )
+    r = leave_one_block_out_cv(d["X"], d["y"], d["blocks"], factory)
+    assert r["mean"] > 0.28, (
+        f"TRCA LOBO mean {r['mean']:.3f} at or below chance (0.25); "
+        "expected ~0.31 from prior measurement."
+    )
