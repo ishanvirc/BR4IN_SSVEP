@@ -96,7 +96,7 @@ def eval_cca_top4_nested(X, y, blocks, stim_freqs, fs, n_harmonics, ch_names):
 def eval_fbcca(X, y, blocks, stim_freqs, fs, n_harmonics):
     """FBCCA — skips gracefully if stub."""
     def factory():
-        return FBCCAClassifier(stim_freqs=stim_freqs, fs=fs, n_harmonics=n_harmonics)
+        return FBCCAClassifier(stim_freqs=stim_freqs, fs=fs, num_harmonics=n_harmonics)
     try:
         return leave_one_block_out_cv(X, y, blocks, factory)
     except NotImplementedError:

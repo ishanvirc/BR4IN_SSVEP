@@ -1,0 +1,6 @@
+classifier,accuracy,std,itr_bpm,notes
+CCA-8ch,0.700,0.158,38.6,b0=0.80 | b1=0.90 | b2=0.60 | b3=0.50
+CCA-top4-nested,0.663,0.238,32.6,b0=0.90 | b1=0.90 | b2=0.40 | b3=0.45
+FBCCA,0.800,0.154,57.7,b0=0.95 | b1=0.95 | b2=0.60 | b3=0.70
+TRCA,0.312,0.065,0.9,b0=0.35 | b1=0.35 | b2=0.20 | b3=0.35
+CH11,0.872,n/a,n/a,fired 39/80 trials (49% coverage); acc_all=0.425
