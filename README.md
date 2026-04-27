@@ -1,4 +1,4 @@
-# BR41N.IO SSVEP — 33-hour hackathon repo
+# BR41N.IO SSVEP — 24-hour hackathon repo
 
 BR41N.IO 2026 Spring School Hackathon — SSVEP Data Analysis track. The
 dataset (four g.tec `.mat` recordings) is in `data/raw/`, characterized in
