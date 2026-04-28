@@ -71,10 +71,10 @@ Empirical map computed from last-100-sample majority vote on every fired trial, 
 
 | CH11 value | trigger frequency observations | Mapping |
 |---|---|---|
-| 1 | 8 trials, all 15 Hz | → 15 Hz ✓ |
-| 2 | 6 trials, all 12 Hz | → 12 Hz ✓ |
-| 3 | 11 trials, all 10 Hz | → 10 Hz ✓ |
-| 4 | 13 trials: 9 at 9 Hz, 4 misfires (12/10/15) | → 9 Hz (mode 69%) ✓ |
+| 1 | 8 trials, all 15 Hz | → 15 Hz OK |
+| 2 | 6 trials, all 12 Hz | → 12 Hz OK |
+| 3 | 11 trials, all 10 Hz | → 10 Hz OK |
+| 4 | 13 trials: 9 at 9 Hz, 4 misfires (12/10/15) | → 9 Hz (mode 69%) OK |
 
 Descending mapping `{1→15, 2→12, 3→10, 4→9}` is empirically validated. CH11=4 has some misfires (the 4 non-9-Hz cases are subject-2 trials where g.tec's LDA was confused), but the modal mapping is unambiguous. CH11=0 is the unambiguous "non-fire" sentinel.
 
@@ -225,7 +225,7 @@ Status: **PASS** (well within ±0.025 tolerance).
 | Subject 1 | O2, O1, Oz, PO8, PO3, PO4, PO7, POz |
 | Subject 2 | PO4, PO8, POz, PO3, O2, Oz, O1, PO7 |
 
-**Exactly matches** the ranking table in `channel_selection.md`. S1 and S2 share only PO8 in their top-4. ✓
+**Exactly matches** the ranking table in `channel_selection.md`. S1 and S2 share only PO8 in their top-4. OK
 
 **8.3 — Accuracy claim reproduction (independent CCA, H=2):**
 
