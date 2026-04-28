@@ -6,8 +6,8 @@ visual evoked potentials (SSVEP) from 8 occipital EEG channels recorded
 on a g.tec g.USBamp, then beat the live g.tec LDA reference (CH11 in the
 recording) on accuracy + ITR + trial coverage.
 
-We built a clean ablation across three classifier families — CCA (Lin
-2007), filter-bank CCA (Chen 2015), ensemble TRCA (Nakanishi 2017) —
+We built a clean ablation across three classifier families  (CCA (Lin
+2007), filter-bank CCA (Chen 2015), ensemble TRCA (Nakanishi 2017))
 plus per-subject SNR-ranked channel selection with leakage-free nested
 cross-validation. **Filter-bank CCA wins decisively** at 95.0% accuracy
 on 100% trial coverage versus the live LDA's 87.2% on only 49%
@@ -17,12 +17,12 @@ sits below Nakanishi's 11-trial saturation threshold).
 
 Every load-bearing number in this README has been independently
 re-derived from the raw `.mat` files and matches the published CSVs to
-≤ 0.001 — see [results/audit_report.md](results/audit_report.md) for
+≤ 0.001. See [results/audit_report.md](results/audit_report.md) for
 the full provenance trace.
 
 ## Headline result
 
-![Classifier comparison — 3s window, cross-subject LOBO across 4 blocks](results/figures/comparison.png)
+![Classifier comparison (3s window), cross-subject LOBO across 4 blocks](results/figures/comparison.png)
 
 **Cross-subject 4-block leave-one-block-out CV, 3 s analysis window, 2 harmonics:**
 
@@ -35,15 +35,15 @@ the full provenance trace.
 | CH11 (g.tec live LDA) | 0.872 | n/a | n/a | **49%** | SOTA reference; no decision on 51% of trials |
 
 FBCCA's within-subject TRCA companion number (under the Nakanishi
-2017 protocol) is 0.475 with subject 1 = 0.675 / subject 2 = 0.275 —
-the within-subject framing recovers 16 pp for TRCA without changing
+2017 protocol) is 0.475 with subject 1 = 0.675 / subject 2 = 0.275.
+The within-subject framing recovers 16 pp for TRCA without changing
 the FBCCA-vs-CCA ranking. Full per-subject decomposition lives in
 [results/within_subject_evaluation.md](results/within_subject_evaluation.md).
 
 ## The universality framing
 
 The dataset has 2 subjects × 2 sessions. Subject 1 produces a textbook
-SSVEP response — every reasonable classifier hits 100%. Subject 2's
+SSVEP response. Every reasonable classifier hits 100%. Subject 2's
 response is noisier and less stimulus-locked: standard CCA tops out at
 67.5%. This is the universality problem documented in
 [Guger et al. 2012](data/raw/How_many_people_could_use_an_SSVEP_BCI.pdf):
@@ -61,7 +61,7 @@ each method recovers on subject 2 without losing subject 1:
 | TRCA | 0.675 | 0.275 | −0.325 | −0.400 |
 | CH11 (on fired) | 1.000 (10/40 fired) | 0.828 (29/40 fired) | — | — |
 
-(Within-subject 4-fold LOBO at 3 s — Nakanishi 2017 protocol.)
+(Within-subject 4-fold LOBO at 3s, Nakanishi 2017 protocol.)
 
 **FBCCA wins because of harmonic recovery.** Subject 2's fundamental-
 frequency SNR is weak, but the harmonic content is intact; FBCCA's
@@ -176,8 +176,7 @@ this repo. See [data/README.md](data/README.md) for the schema.
 ## Notebooks
 
 Read in order. Each notebook is a thin pedagogical wrapper around the
-`src/ssvep/` and `scripts/` APIs — none of them reimplement the
-algorithms. Full index in [notebooks/README.md](notebooks/README.md).
+`src/ssvep/` and `scripts/` APIs. Full index in [notebooks/README.md](notebooks/README.md).
 
 | # | Notebook | What it shows |
 |---|---|---|
@@ -191,8 +190,7 @@ algorithms. Full index in [notebooks/README.md](notebooks/README.md).
 | 08 | channel_selection (Yuki) | Per-subject SNR-ranked top-4; cross-subject channel transfer test |
 | 09 | topomap_vt (VT) | Topomap visualizations; channel-stability heatmaps |
 
-All notebooks are committed with executed outputs — read them on
-GitHub without running locally.
+All notebooks are committed with executed outputs. You can read them on GitHub without running locally.
 
 ## Results artifacts
 
@@ -212,14 +210,6 @@ Key files in [results/](results/) (full index in
 | [figures/cca_window_sweep_with_nested.png](results/figures/cca_window_sweep_with_nested.png) | 3-line CCA window sweep (slide-ready) |
 | [figures/channel_stability_topomap_*.png](results/figures/) | VT's channel-stability topomaps |
 
-## Methodology notes
-
-If you only read three things in this repo, read these:
-
-1. [results/audit_report.md](results/audit_report.md) — verifies every published number end-to-end. Independent re-derivation matches CSV to ≤ 0.001 across all 80 trials, both protocols, all 4 windows, both harmonic counts.
-2. [results/within_subject_evaluation.md](results/within_subject_evaluation.md) — explains why within-subject LOBO is the methodologically correct protocol, and why FBCCA wins under both protocols.
-3. [results/trca_methodology_note.md](results/trca_methodology_note.md) — the TRCA negative result is not a bug; it's a documented property of the data regime relative to Nakanishi 2017's published thresholds.
-
 ## Citations
 
 - **Lin, Z., Zhang, C., Wu, W., & Gao, X. (2007).** *Frequency Recognition Based on Canonical Correlation Analysis for SSVEP-Based BCIs.* IEEE Trans. Biomed. Eng. 54(6):1172–1176.
@@ -230,13 +220,12 @@ If you only read three things in this repo, read these:
 
 ## License and acknowledgments
 
-This repository's original code is released under the **MIT License** —
-see [LICENSE](LICENSE).
+This repository's original code is released under the **MIT** [LICENSE](LICENSE).
 
 The TRCA implementation in [src/ssvep/classifiers/trca.py](src/ssvep/classifiers/trca.py)
 is a port of [meegkit](https://github.com/nbara/python-meegkit)'s
 standalone `_trca` function and remains under its original BSD 3-Clause
-license — full attribution in [LICENSES/meegkit-BSD-3.txt](LICENSES/meegkit-BSD-3.txt).
+license. Full attribution in [LICENSES/meegkit-BSD-3.txt](LICENSES/meegkit-BSD-3.txt).
 
 The hackathon dataset was distributed by **g.tec medical engineering
 GmbH** at the BR41N.IO 2026 Spring School Hackathon. The Guger et al.
@@ -244,4 +233,4 @@ GmbH** at the BR41N.IO 2026 Spring School Hackathon. The Guger et al.
 hardware and live LDA pipeline that produced the CH11 reference signal
 used as the SOTA benchmark in this work.
 
-Team: Ishanvir Choongh, Yuki, VT.
+Team: Ishanvir Choongh, Yuki Kikuchi, Boha Go (VT), Aayush Gandhi, Michael Sabatino, Anna Sokolova.
