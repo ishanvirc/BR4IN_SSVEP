@@ -1,13 +1,13 @@
 # BR41N.IO 2026 SSVEP — 1st Place, BCI Data Analysis Projects
 
-A 33-hour hackathon submission that placed **1st in the BCI Data Analysis
+A 27-hour hackathon submission that placed **1st in the BCI Data Analysis
 Projects track** at BR41N.IO 2026 Spring School. Goal: decode steady-state
 visual evoked potentials (SSVEP) from 8 occipital EEG channels recorded
 on a g.tec g.USBamp, then beat the live g.tec LDA reference (CH11 in the
 recording) on accuracy + ITR + trial coverage.
 
 We built a clean ablation across three classifier families — CCA (Lin
-2007), filter-bank CCA (Chen 2015), ensemble TRCA (Nakanishi 2018) —
+2007), filter-bank CCA (Chen 2015), ensemble TRCA (Nakanishi 2017) —
 plus per-subject SNR-ranked channel selection with leakage-free nested
 cross-validation. **Filter-bank CCA wins decisively** at 95.0% accuracy
 on 100% trial coverage versus the live LDA's 87.2% on only 49%
@@ -31,11 +31,11 @@ the full provenance trace.
 | CCA-8ch | 0.838 | 0.163 | 22.0 | 100% | Lin 2007, all 8 occipital channels |
 | CCA-top4-nested | 0.850 | 0.150 | 23.0 | 100% | Per-fold SNR-ranked top 4, leakage-free |
 | **FBCCA** | **0.950** | **0.061** | **32.7** | **100%** | Chen 2015, 5 sub-bands, n⁻¹·²⁵+0.25 weights |
-| TRCA | 0.312 | 0.041 | 0.3 | 100% | Nakanishi 2018; documented negative result (see methodology note) |
+| TRCA | 0.312 | 0.041 | 0.3 | 100% | Nakanishi 2017; documented negative result (see methodology note) |
 | CH11 (g.tec live LDA) | 0.872 | n/a | n/a | **49%** | SOTA reference; no decision on 51% of trials |
 
 FBCCA's within-subject TRCA companion number (under the Nakanishi
-2018 protocol) is 0.475 with subject 1 = 0.675 / subject 2 = 0.275 —
+2017 protocol) is 0.475 with subject 1 = 0.675 / subject 2 = 0.275 —
 the within-subject framing recovers 16 pp for TRCA without changing
 the FBCCA-vs-CCA ranking. Full per-subject decomposition lives in
 [results/within_subject_evaluation.md](results/within_subject_evaluation.md).
@@ -61,7 +61,7 @@ each method recovers on subject 2 without losing subject 1:
 | TRCA | 0.675 | 0.275 | −0.325 | −0.400 |
 | CH11 (on fired) | 1.000 (10/40 fired) | 0.828 (29/40 fired) | — | — |
 
-(Within-subject 4-fold LOBO at 3 s — Nakanishi 2018 protocol.)
+(Within-subject 4-fold LOBO at 3 s — Nakanishi 2017 protocol.)
 
 **FBCCA wins because of harmonic recovery.** Subject 2's fundamental-
 frequency SNR is weak, but the harmonic content is intact; FBCCA's
@@ -92,7 +92,7 @@ br4in_ssvep/
 │       ├── __init__.py             # re-exports CCA / FBCCA / TRCA classes
 │       ├── cca.py                  # Lin 2007 — CCA against canonical sin/cos refs
 │       ├── fbcca.py                # Chen 2015 — 5 Cheb I sub-bands, weighted squared-ρ aggregation
-│       └── trca.py                 # Nakanishi 2018 — ensemble TRCA, port of meegkit (BSD-3)
+│       └── trca.py                 # Nakanishi 2017 — ensemble TRCA, port of meegkit (BSD-3)
 │
 ├── notebooks/                      # 01..09; see notebooks/README.md
 │   ├── 01_data_exploration.ipynb       # full dataset characterization, CH11 mapping recovery
@@ -155,7 +155,7 @@ pytest tests/ -q                                 # 16 passed
 
 # Headline classifier comparison (requires data/raw/*.mat)
 python scripts/compare_classifiers.py --window 3.0 --harmonics 2
-# Within-subject protocol (Nakanishi 2018):
+# Within-subject protocol (Nakanishi 2017):
 python scripts/compare_classifiers.py --protocol within_subject --window 3.0 --harmonics 2
 
 # CCA window-length sweep
@@ -218,13 +218,13 @@ If you only read three things in this repo, read these:
 
 1. [results/audit_report.md](results/audit_report.md) — verifies every published number end-to-end. Independent re-derivation matches CSV to ≤ 0.001 across all 80 trials, both protocols, all 4 windows, both harmonic counts.
 2. [results/within_subject_evaluation.md](results/within_subject_evaluation.md) — explains why within-subject LOBO is the methodologically correct protocol, and why FBCCA wins under both protocols.
-3. [results/trca_methodology_note.md](results/trca_methodology_note.md) — the TRCA negative result is not a bug; it's a documented property of the data regime relative to Nakanishi 2018's published thresholds.
+3. [results/trca_methodology_note.md](results/trca_methodology_note.md) — the TRCA negative result is not a bug; it's a documented property of the data regime relative to Nakanishi 2017's published thresholds.
 
 ## Citations
 
 - **Lin, Z., Zhang, C., Wu, W., & Gao, X. (2007).** *Frequency Recognition Based on Canonical Correlation Analysis for SSVEP-Based BCIs.* IEEE Trans. Biomed. Eng. 54(6):1172–1176.
 - **Chen, X., Wang, Y., Gao, S., Jung, T.-P., & Gao, X. (2015).** *Filter bank canonical correlation analysis for implementing a high-speed SSVEP-based brain-computer interface.* J. Neural Eng. 12:046008.
-- **Nakanishi, M., Wang, Y., Chen, X., Wang, Y.-T., Gao, X., & Jung, T.-P. (2018).** *Enhancing Detection of SSVEPs for a High-Speed Brain Speller Using Task-Related Component Analysis.* IEEE Trans. Biomed. Eng. 65(1):104–112.
+- **Nakanishi, M., Wang, Y., Chen, X., Wang, Y.-T., Gao, X., & Jung, T.-P. (2017).** *Enhancing Detection of SSVEPs for a High-Speed Brain Speller Using Task-Related Component Analysis.* IEEE Trans. Biomed. Eng. 65(1):104–112.
 - **Guger, C., Allison, B. Z., Großwindhager, B., Prückl, R., Hintermüller, C., Kapeller, C., Bruckner, M., Krausz, G., & Edlinger, G. (2012).** *How Many People Could Use an SSVEP BCI?* Front. Neurosci. 6:169.
 - **Wolpaw, J. R., et al. (1998).** *EEG-based communication: improved accuracy by response verification.* IEEE Trans. Rehabil. Eng. 6(3):326–333. (ITR formula.)
 
