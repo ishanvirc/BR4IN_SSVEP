@@ -13,11 +13,15 @@ import numpy as np
 
 import mne
 
-# Stage 02 recommended preprocessing presets.
-# Default is the 3-second fast setting for real-time / ITR-oriented testing.
-# Other window lengths are included for comparison and robustness checks.
-# Full rationale and scan results are in notebooks/02_preprocessing.ipynb.
-
+#: Recommended preprocessing presets from VT's parameter scan
+#: (notebooks/02_preprocessing.ipynb). Each entry is a dict with keys
+#: ``notch_freqs`` (Hz tuple), ``bandpass_range`` ``(low, high)`` Hz,
+#: ``tmin`` / ``tmax`` epoch bounds in seconds relative to stim onset.
+#:
+#: ``default_3s`` is the canonical configuration used by the headline
+#: classifier comparison (``scripts/compare_classifiers.py``); the other
+#: presets exist for robustness checks at alternative window lengths.
+#: See notebooks/02_preprocessing.ipynb for the full scan and rationale.
 PREPROCESSING_PRESETS = {
     "default_3s": {
         "notch_freqs": (50.0,),

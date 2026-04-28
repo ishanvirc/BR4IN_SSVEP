@@ -1,302 +1,122 @@
-# BR41N.IO SSVEP — 33-hour hackathon repo
+# BR41N.IO 2026 SSVEP — 1st Place, BCI Data Analysis Projects
 
-BR41N.IO 2026 Spring School Hackathon — SSVEP Data Analysis track. Four
-g.tec `.mat` recordings (2 subjects × 2 sessions, ~225 s of continuous
-EEG each) live in `data/raw/`. CH11 carries g.tec's live LDA classifier
-output and serves as the SOTA reference. Our job: implement CCA, FBCCA,
-and TRCA in `src/ssvep/`, then compare accuracy + ITR (bits/min) against
-CH11 across varying analysis windows and two evaluation protocols.
+A 33-hour hackathon submission that placed **1st in the BCI Data Analysis
+Projects track** at BR41N.IO 2026 Spring School. Goal: decode steady-state
+visual evoked potentials (SSVEP) from 8 occipital EEG channels recorded
+on a g.tec g.USBamp, then beat the live g.tec LDA reference (CH11 in the
+recording) on accuracy + ITR + trial coverage.
 
-The headline result is in [results/audit_report.md](results/audit_report.md);
-see the [Results](#results) section below for the slide-ready summary.
+We built a clean ablation across three classifier families — CCA (Lin
+2007), filter-bank CCA (Chen 2015), ensemble TRCA (Nakanishi 2018) —
+plus per-subject SNR-ranked channel selection with leakage-free nested
+cross-validation. **Filter-bank CCA wins decisively** at 95.0% accuracy
+on 100% trial coverage versus the live LDA's 87.2% on only 49%
+coverage. TRCA underperforms by 30–40 pp at every fold; the negative
+result is documented as a property of the data regime (5 trials/class
+sits below Nakanishi's 11-trial saturation threshold).
 
-## Dataset
+Every load-bearing number in this README has been independently
+re-derived from the raw `.mat` files and matches the published CSVs to
+≤ 0.001 — see [results/audit_report.md](results/audit_report.md) for
+the full provenance trace.
 
-2 subjects × 2 sessions = 4 `.mat` files in `data/raw/` (gitignored).
-Each file is **continuous** EEG, shape `(11, n_samples)` at 256 Hz:
+## Headline result
 
-- **CH1** — sample time (seconds since recording start)
-- **CH2–9** — EEG (PO7, PO3, POz, PO4, PO8, O1, Oz, O2 — all occipital)
-- **CH10** — trigger (0 when stim off, otherwise stim freq in Hz)
-- **CH11** — g.tec's live LDA classifier output (the SOTA reference)
+![Classifier comparison — 3s window, cross-subject LOBO across 4 blocks](results/figures/comparison.png)
 
-Stimulation frequencies: 9, 10, 12, 15 Hz. 20 trials per file (5 per
-class), 7.36 s stim + 3.14 s gap. 80 trials total across the 4 files.
+**Cross-subject 4-block leave-one-block-out CV, 3 s analysis window, 2 harmonics:**
 
-CH11 mapping is **descending**: class 1 = 15 Hz, 2 = 12, 3 = 10, 4 = 9.
-Empirically validated against CH10 ground truth — see
-[data/README.md](data/README.md) for full provenance and the per-file
-LDA fire-rate breakdown.
+| Classifier | Accuracy | Std | ITR (bpm) | Coverage | Notes |
+|---|---|---|---|---|---|
+| CCA-8ch | 0.838 | 0.163 | 22.0 | 100% | Lin 2007, all 8 occipital channels |
+| CCA-top4-nested | 0.850 | 0.150 | 23.0 | 100% | Per-fold SNR-ranked top 4, leakage-free |
+| **FBCCA** | **0.950** | **0.061** | **32.7** | **100%** | Chen 2015, 5 sub-bands, n⁻¹·²⁵+0.25 weights |
+| TRCA | 0.312 | 0.041 | 0.3 | 100% | Nakanishi 2018; documented negative result (see methodology note) |
+| CH11 (g.tec live LDA) | 0.872 | n/a | n/a | **49%** | SOTA reference; no decision on 51% of trials |
 
-## Strategy
+FBCCA's within-subject TRCA companion number (under the Nakanishi
+2018 protocol) is 0.475 with subject 1 = 0.675 / subject 2 = 0.275 —
+the within-subject framing recovers 16 pp for TRCA without changing
+the FBCCA-vs-CCA ranking. Full per-subject decomposition lives in
+[results/within_subject_evaluation.md](results/within_subject_evaluation.md).
 
-The track asks us to compare with state-of-the-art. We do that
-properly: three classifiers along an axis of complexity, plus g.tec's
-own live classifier as the SOTA truth-line.
+## The universality framing
 
-| Method                | Sub-bands? | Subject-specific filters? | Training? |
-|-----------------------|------------|---------------------------|-----------|
-| CCA (Lin 2007)        | No         | No                        | No        |
-| FBCCA (Chen 2015)     | Yes        | No                        | No        |
-| TRCA (Nakanishi 2018) | Yes        | Yes                       | Yes       |
+The dataset has 2 subjects × 2 sessions. Subject 1 produces a textbook
+SSVEP response — every reasonable classifier hits 100%. Subject 2's
+response is noisier and less stimulus-locked: standard CCA tops out at
+67.5%. This is the universality problem documented in
+[Guger et al. 2012](data/raw/How_many_people_could_use_an_SSVEP_BCI.pdf):
+the fraction of the population for whom SSVEP BCIs work cleanly is not
+100%.
 
-Each row adds one capability; this is our ablation. We compare all
-three against **CH11**, g.tec's live LDA classifier output (Friman
-2007 minimum-energy + LDA, trained on per-subject calibration). CH11
-is the SOTA reference — see Guger et al. 2012 for the published method
-on identical hardware.
+The classifier comparison is fundamentally the question of how much
+each method recovers on subject 2 without losing subject 1:
 
-Headline metric: **ITR (bits/min) at varying window lengths**, not raw
-accuracy. The win condition is matching CH11's accuracy at a shorter
-window — which boosts ITR — plus achieving 100% trial coverage where
-CH11 fires on only ~49% of trials.
+| Classifier | Subject 1 | Subject 2 | Cost on S1 | Lift on S2 |
+|---|---|---|---|---|
+| CCA (H=2) | 1.000 | 0.675 | — | — |
+| **FBCCA (H=2)** | **1.000** | **0.900** | 0.000 | **+0.225** |
+| FBCCA (H=5, methodology note default) | 0.975 | 0.775 | 0.025 | +0.100 |
+| TRCA | 0.675 | 0.275 | −0.325 | −0.400 |
+| CH11 (on fired) | 1.000 (10/40 fired) | 0.828 (29/40 fired) | — | — |
 
-We are NOT inventing a novel method. Execution quality on a
-well-scoped comparison beats novelty on a half-finished one.
+(Within-subject 4-fold LOBO at 3 s — Nakanishi 2018 protocol.)
 
-## Install
+**FBCCA wins because of harmonic recovery.** Subject 2's fundamental-
+frequency SNR is weak, but the harmonic content is intact; FBCCA's
+sub-band weighting captures it. CCA and TRCA can't. This is the
+quantitative answer to the universality problem on this dataset.
 
-**Windows:**
-
-```powershell
-.\scripts\setup.ps1
-```
-
-The script creates the `br41n-ssvep` conda env from `environment.yml`,
-activates it, and runs `pip install -e .` so `from ssvep import ...`
-works from anywhere (notebooks, scripts, tests).
-
-**Mac/Linux:**
-
-```bash
-conda env create -f environment.yml && conda activate br41n-ssvep && pip install -e .
-```
-
-**Pure pip (no conda):**
-
-```bash
-python -m venv .venv
-# Windows: .venv\Scripts\activate     |     Mac/Linux: source .venv/bin/activate
-pip install -r requirements.txt
-pip install -e .
-```
-
-`pip install -e .` is what makes `from ssvep import ...` work
-everywhere. Don't skip it — `requires-python >=3.11` per
-[pyproject.toml](pyproject.toml).
-
-## Sanity check (synthetic)
-
-If you've just cloned the repo and want to verify it works before
-touching real data:
-
-```bash
-python scripts/run_baseline.py --synthetic
-pytest tests/ -q
-```
-
-`--synthetic` generates fake SSVEP-shaped trials and runs the full
-load → preprocess → CCA → ITR → LOBO-CV chain. The smoke test suite
-covers imports, ITR formula edge cases, CCA on synthetic, LOBO-CV
-mechanics, real-data loaders, continuous-first preprocessing, FBCCA
-on synthetic + real, and TRCA on synthetic + real. Real-data tests
-auto-skip if `data/raw/` is empty.
-
-## Run on the hackathon data
-
-The four `.mat` files should already be in `data/raw/` from the
-hackathon Discord drop. If they're missing, download them and drop
-them in (`data/raw/` is gitignored).
-
-### Single-file CCA baseline
-
-```bash
-python scripts/run_baseline.py --mat data/raw/<file>.mat
-python scripts/run_baseline.py --mat data/raw/                # whole directory → load_all + LOBO
-```
-
-CLI: `--bandpass LOW HIGH`, `--notch FREQ`, `--no-filter`,
-`--harmonics N`, `--window-s SECONDS`. Defaults are the canonical
-3–45 Hz bandpass + 50 Hz notch on continuous-before-epoching, 2
-harmonics, full trial length.
-
-### Headline classifier comparison
-
-```bash
-# Cross-subject 4-block LOBO (default)
-python scripts/compare_classifiers.py --window 3.0 --harmonics 2
-
-# Within-subject LOBO (Nakanishi 2018 protocol; 4 folds, 2 per subject)
-python scripts/compare_classifiers.py --protocol within_subject --window 3.0 --harmonics 2
-```
-
-Writes `results/tables/comparison{,_within_subject}.csv` and matching
-PNGs. Five rows per run: CCA-8ch, CCA-top4-nested (or CCA-top4 in the
-within-subject path), FBCCA, TRCA, CH11. CLI: `--window`, `--harmonics`,
-`--protocol`, `--data-dir`.
-
-### CCA window-length sweep
-
-```bash
-python scripts/sweep_cca_windows.py
-```
-
-Sweeps 10 window lengths (0.5–5.0 s) across three configurations:
-8-channel canonical, per-subject top-4 (with leakage, kept as the
-optimistic upper bound), and per-fold nested top-4 (leakage-free).
-Emits `cca_window_sweep.csv`, `cca_window_sweep_nested.csv`,
-`cca_window_sweep.png`, and `cca_window_sweep_with_nested.png`.
-
-### CH11 sanity (verifies g.tec's LDA mapping)
-
-```bash
-python scripts/verify_ch11.py
-```
-
-Brute-forces all 24 permutations of the (LDA class index → stim freq)
-mapping per file and aggregate. Confirms the descending mapping
-`{1:15, 2:12, 3:10, 4:9}` is the empirically best fit; reports per-file
-fire rate and aggregate accuracy.
-
-## Results
-
-**Headline (within-subject LOBO, 3.0s window, H=2):**
-
-| Classifier | Accuracy | ITR (bpm) | Notes |
-|---|---|---|---|
-| CCA-8ch | 0.838 ± 0.163 | 22.0 | sin/cos refs, 8 occipital channels |
-| CCA-top4 (per-fold nested) | 0.850 ± 0.150 | 23.0 | SNR-ranked top 4, leakage-free |
-| **FBCCA** | **0.950 ± 0.061** | **32.7** | 5 sub-bands, Chen 2015 weighting |
-| TRCA | 0.475 ± 0.202 | 3.4 | Nakanishi 2018; underperforms — see below |
-| CH11 (g.tec live LDA) | 0.872 on fired | n/a | fires on only 39/80 trials (49% coverage) |
-
-FBCCA is the recommended classifier on this dataset: highest mean
-accuracy and lowest variance, with full 100% trial coverage versus
-CH11's 49%. The 3.7pp mean gain over CCA concentrates on subject 2
-(+10pp), where harmonic recovery rescues the weaker SSVEP response.
-
-**Per-subject decomposition (within-subject LOBO, 3.0s):**
-
-| Configuration | Subject 1 | Subject 2 |
-|---|---|---|
-| CCA | 1.000 | 0.675 |
-| FBCCA (H=2) | 1.000 | 0.900 |
-| FBCCA (H=5, methodology note default) | 0.975 | 0.775 |
-| TRCA | 0.675 | 0.275 |
-| CH11 (on fired trials) | 1.000 (10/40 fired) | 0.828 (29/40 fired) |
-
-Subject 1 is a textbook responder; subject 2 shows the universality
-problem documented by Guger et al. 2012. FBCCA's harmonic recovery
-narrows the gap from both ends.
-
-**Methodology + verification artifacts:**
-
-- [results/within_subject_evaluation.md](results/within_subject_evaluation.md) — protocol justification (within-subject LOBO per Nakanishi 2018 / Chen 2015) and per-subject decomposition.
-- [results/trca_methodology_note.md](results/trca_methodology_note.md) — TRCA negative result analysis. Briefly: 5 trials/class is the floor of Nakanishi's reported regime (saturation at ~11), and the dataset's wide frequency spacing (1–3 Hz) is exactly where CCA's matched-filter optimality dominates.
-- [results/channel_selection.md](results/channel_selection.md) — Yuki's per-subject SNR-ranked channel-subset analysis.
-- [results/audit_report.md](results/audit_report.md) — end-to-end provenance trace verifying every load-bearing number from raw `.mat` through CSV. Independent re-derivations match published numbers to ≤ ±0.001.
-- [results/tables/](results/tables/) and [results/figures/](results/figures/) — CSV/PNG artifacts at 1/2/3/5 s windows for both protocols, plus the window sweep and channel-stability topomaps.
-
-## Pipeline stages → notebooks
-
-| # | Notebook | Owner | Purpose |
-|---|---|---|---|
-| 01 | `01_data_exploration.ipynb` | shared | full dataset characterization, trial structure, CH11 mapping recovery, PSD plots. **Read this first.** |
-| 02 | `02_preprocessing.ipynb` | VT | notch + bandpass + epoch parameter scan. Established the canonical 3–45 Hz bandpass + 50 Hz notch on continuous-before-epoching defaults. CSV outputs in `notebooks/preprocessing_parameter_testing_results/`. |
-| 03 | `03_cca_baseline.ipynb` | — | run CCA, accuracy + ITR (stub — CSV pipeline supersedes) |
-| 04 | `04_fbcca.ipynb` | — | filter-bank CCA (Chen 2015) (stub — `compare_classifiers.py` supersedes) |
-| 05 | `05_trca.ipynb` | — | TRCA (Nakanishi 2018) (stub — `compare_classifiers.py` supersedes) |
-| 06 | `06_comparison_and_itr.ipynb` | — | classifier comparison, ITR sweep (stub — `compare_classifiers.py` supersedes) |
-| 07 | `07_demo.ipynb` | shared | clean demo for presentation |
-| 08 | `08_channel_selection.ipynb` | Yuki | per-subject SNR-ranked channel subsets vs 8-channel baseline; cross-subject channel transfer test. |
-| 09 | `09_topomap_vt.ipynb` | VT | topomap visualizations of stimulus-locked response across electrodes; channel-stability heatmaps. |
-
-## `src/ssvep/` modules
-
-| Module | Purpose |
-|---|---|
-| [io.py](src/ssvep/io.py) | `load_continuous` (raw matrix), `load_mat` (continuous-first preprocessing + epoching), `load_all` (concatenate all files, assign per-file block IDs). Trigger-driven epoching at 0.14 s post-stimulus latency (Chen 2015). Also exports `load_mat_legacy` for the deprecated epoched-with-labels schema. |
-| [preprocessing.py](src/ssvep/preprocessing.py) | `filter_continuous` (notch + bandpass on the (11, N) matrix BEFORE epoching, EEG rows only — sample-time/trigger/LDA rows preserved byte-identical). Plus per-trial `notch_filter`, `bandpass`, `epoch`, `baseline_correct` helpers (MNE-backed). |
-| [features.py](src/ssvep/features.py) | `cca_reference_signals` (canonical sin/cos basis), `psd` (Welch), `snr_at_freq` (target / flanking-band ratio). |
-| [channel_selection.py](src/ssvep/channel_selection.py) | `rank_channels_by_snr` (SNR ranking across stim freqs), `channel_snr_matrix` (per-class per-channel SNR), `sweep_channel_subsets` (LOBO-CV CCA across top-N subsets). |
-| [evaluation.py](src/ssvep/evaluation.py) | `accuracy`, `confusion_matrix`, `itr` (Wolpaw bits/min), `leave_one_block_out_cv`. |
-| [synthetic.py](src/ssvep/synthetic.py) | `make_synthetic_dataset` — fake SSVEP with per-channel amplitude + phase, white-Gaussian noise at configurable SNR. Mirrors the `load_mat` dict schema. |
-| [viz.py](src/ssvep/viz.py) | `plot_psd`, `plot_topomap_at_freq` (bar-plot fallback until MNE montage is set), `plot_spectrogram`, `plot_confusion`. |
-| [classifiers/cca.py](src/ssvep/classifiers/cca.py) | `CCAClassifier` — per-trial CCA against canonical sin/cos refs, argmax-correlation predict. `fit` is a no-op. |
-| [classifiers/fbcca.py](src/ssvep/classifiers/fbcca.py) | `FBCCAClassifier` — Chen 2015 filter-bank CCA. 5 Cheb I sub-bands, weights `n^-1.25 + 0.25`, squared-correlation aggregation. `fit` is a no-op. |
-| [classifiers/trca.py](src/ssvep/classifiers/trca.py) | `TRCAClassifier` — ensemble TRCA (Nakanishi 2018), ported from meegkit (BSD-3, see `LICENSES/`). Per-class generalized eigenvalue solve `S w = λ Q w`; ensemble of per-class spatial filters at predict time. |
-| [\_\_init\_\_.py](src/ssvep/__init__.py) | Re-exports all submodules and `RANDOM_SEED = 42`. |
-
-## Tests
-
-```bash
-pytest tests/ -q
-```
-
-[tests/test_smoke.py](tests/test_smoke.py) covers:
-
-- **Import + plumbing:** every public submodule imports; `RANDOM_SEED` is set.
-- **Reference-signal shape:** `cca_reference_signals` returns `(n_classes, 2H, n_samples)` with sin starting at 0, cos at 1.
-- **ITR formula edge cases:** perfect accuracy = `log2(N)`, chance = 0, mid-range matches Wolpaw hand-computation.
-- **CCA on synthetic** + **LOBO-CV mechanics** (no flaky thresholds).
-- **Real-data smoke:** `load_mat` + `load_all` shapes, CH11 sentinel handling, per-trial CH11 accuracy ≥ 0.80.
-- **Continuous-first preprocessing:** `filter_continuous` preserves rows 0/9/10 (time, trigger, LDA); `load_mat` with canonical filters puts subject 1 / training 1 in [0.85, 1.0].
-- **Composability:** `load_continuous → filter_continuous → epoch_trials` matches `load_mat(...filtered)` byte-for-byte.
-- **TRCA on synthetic** (TRCA-friendly inline generator) **+ TRCA on real LOBO** (floor 0.28).
-- **FBCCA on synthetic** (≥ 0.75) **+ FBCCA on real LOBO** (≥ 0.65).
-
-Real-data tests auto-skip when `data/raw/` is empty.
-
-## Repo layout
+## Repository structure
 
 ```
 br4in_ssvep/
 ├── README.md                       # this file
+├── LICENSE                         # MIT, 2026 Ishanvir Choongh
 ├── pyproject.toml                  # setuptools config; package = src/ssvep, requires-python >=3.11
-├── environment.yml                 # conda env "br41n-ssvep" (Python 3.11, numpy/scipy/mne/sklearn/...)
+├── environment.yml                 # conda env "br41n-ssvep" (Python 3.11 + numpy/scipy/mne/sklearn/...)
 ├── requirements.txt                # pip equivalent
-├── .gitignore                      # ignores data/raw, data/processed, references/, caches
+├── .gitignore
 │
 ├── src/ssvep/                      # canonical pipeline package
 │   ├── __init__.py                 # re-exports + RANDOM_SEED = 42
 │   ├── io.py                       # load_continuous / load_mat / load_all (continuous schema, trigger-driven epoching)
-│   ├── preprocessing.py            # filter_continuous (notch + bandpass before epoching, MNE-backed)
+│   ├── preprocessing.py            # filter_continuous + PREPROCESSING_PRESETS (notch + bandpass before epoching, MNE-backed)
 │   ├── features.py                 # cca_reference_signals, psd (Welch), snr_at_freq
 │   ├── channel_selection.py        # rank_channels_by_snr, channel_snr_matrix, sweep_channel_subsets
-│   ├── evaluation.py               # accuracy, confusion_matrix, itr (Wolpaw), leave_one_block_out_cv
+│   ├── evaluation.py               # accuracy, confusion_matrix, itr (Wolpaw 1998), leave_one_block_out_cv
 │   ├── synthetic.py                # make_synthetic_dataset (matches load_mat schema)
 │   ├── viz.py                      # plot_psd, plot_topomap_at_freq, plot_spectrogram, plot_confusion
 │   └── classifiers/
-│       ├── __init__.py             # re-exports CCAClassifier, FBCCAClassifier, TRCAClassifier
-│       ├── cca.py                  # ✅ Lin 2007 — CCA against canonical sin/cos refs
-│       ├── fbcca.py                # ✅ Chen 2015 — 5 Cheb I sub-bands, weighted squared-ρ aggregation
-│       └── trca.py                 # ✅ Nakanishi 2018 — ensemble TRCA, port of meegkit BSD-3
+│       ├── __init__.py             # re-exports CCA / FBCCA / TRCA classes
+│       ├── cca.py                  # Lin 2007 — CCA against canonical sin/cos refs
+│       ├── fbcca.py                # Chen 2015 — 5 Cheb I sub-bands, weighted squared-ρ aggregation
+│       └── trca.py                 # Nakanishi 2018 — ensemble TRCA, port of meegkit (BSD-3)
 │
-├── notebooks/                      # 01..09, see "Pipeline stages → notebooks" above
-│   ├── 01_data_exploration.ipynb       # full characterization, CH11 mapping recovery
-│   ├── 02_preprocessing.ipynb          # VT — bandpass/notch/epoch parameter scan
-│   ├── 03_cca_baseline.ipynb           # (stub — superseded by compare_classifiers.py)
-│   ├── 04_fbcca.ipynb                  # (stub — superseded)
-│   ├── 05_trca.ipynb                   # (stub — superseded)
-│   ├── 06_comparison_and_itr.ipynb     # (stub — superseded)
+├── notebooks/                      # 01..09; see notebooks/README.md
+│   ├── 01_data_exploration.ipynb       # full dataset characterization, CH11 mapping recovery
+│   ├── 02_preprocessing.ipynb          # VT — bandpass/notch/window scan; chosen defaults
+│   ├── 03_cca_baseline.ipynb           # CCA pedagogical wrapper; LOBO 0.838
+│   ├── 04_fbcca.ipynb                  # filter-bank CCA pedagogical wrapper; LOBO 0.950
+│   ├── 05_trca.ipynb                   # TRCA + documented negative-result analysis
+│   ├── 06_comparison_and_itr.ipynb     # full ablation + Wolpaw ITR sweep
 │   ├── 07_demo.ipynb                   # presentation demo
 │   ├── 08_channel_selection.ipynb      # Yuki — per-subject SNR-ranked channels
 │   ├── 09_topomap_vt.ipynb             # VT — topomap + channel-stability viz
-│   └── preprocessing_parameter_testing_results/   # CSV outputs from notebook 02's scan
-│       ├── archive_full_scan/                     # full grid (bandpass × notch × window)
-│       └── top_outputs/                           # decision tables for the chosen defaults
+│   ├── README.md                       # notebook index + reading order
+│   └── preprocessing_parameter_testing_results/   # CSV outputs from notebook 02
 │
 ├── scripts/
 │   ├── setup.ps1                       # one-command Windows env setup
 │   ├── run_baseline.py                 # single-file CCA runner (--mat | --synthetic, ±filter flags)
 │   ├── verify_ch11.py                  # 24-permutation CH11 mapping sweep
 │   ├── sweep_cca_windows.py            # 10-window × 3-config CCA sweep → CSV + slide-ready PNG
-│   └── compare_classifiers.py          # headline harness: CCA / CCA-top4 / FBCCA / TRCA / CH11
-│                                       #   --protocol cross_subject|within_subject  --window  --harmonics
+│   └── compare_classifiers.py          # headline harness (--protocol, --window, --harmonics, --data-dir)
 │
 ├── tests/
 │   ├── __init__.py
-│   └── test_smoke.py                   # imports, refs, ITR, CCA, LOBO, real data, continuous-first, TRCA, FBCCA
+│   └── test_smoke.py                   # 16 tests: imports, refs, ITR, CCA, LOBO, real data, continuous-first, FBCCA, TRCA
 │
 ├── data/
 │   ├── README.md                       # provenance, channel layout, recording params, CH11 mapping derivation
@@ -304,75 +124,124 @@ br4in_ssvep/
 │   └── processed/                      # gitignored — caches, intermediate arrays
 │
 ├── results/
-│   ├── audit_report.md                     # end-to-end provenance audit (this audit run)
-│   ├── within_subject_evaluation.md        # protocol justification + headline numbers (H=5 FBCCA)
-│   ├── trca_methodology_note.md            # TRCA negative-result analysis
-│   ├── channel_selection.md                # Yuki's writeup
-│   ├── tables/
-│   │   ├── comparison.csv                      # cross-subject 3s default
-│   │   ├── comparison_{1,2,3,5}s.csv           # cross-subject window variants
-│   │   ├── comparison_within_subject.csv       # within-subject (currently 5s — see audit)
-│   │   ├── comparison_within_subject_{1,2,3,5}s.csv
-│   │   ├── cca_window_sweep.csv                # 10 windows × {A=8ch, B=per-subject top-4 leakage}
-│   │   └── cca_window_sweep_nested.csv         # 10 windows × {A=8ch, B-nested=per-fold leakage-free}
-│   └── figures/
-│       ├── comparison*.png                     # bar charts mirroring the CSVs above
-│       ├── cca_window_sweep.png                # 2-line sweep figure
-│       ├── cca_window_sweep_with_nested.png    # 3-line sweep figure (slide-ready)
-│       ├── channel_snr_heatmap.png             # frequency × channel SNR heatmap (Yuki)
-│       ├── channel_snr_ranking.png             # SNR per channel, overall vs per-subject
-│       ├── channel_sweep_accuracy.png          # CCA acc vs N channels (Yuki)
-│       └── channel_stability_topomap_*.png     # VT — channel-stability topomaps
+│   ├── README.md                       # results index
+│   ├── audit_report.md                 # end-to-end provenance audit (verification source of truth)
+│   ├── within_subject_evaluation.md    # protocol justification + within-subject headline numbers
+│   ├── trca_methodology_note.md        # TRCA negative-result analysis
+│   ├── channel_selection.md            # Yuki's writeup
+│   ├── tables/                         # comparison_*.csv, cca_window_sweep*.csv (12 files)
+│   └── figures/                        # 19 PNGs: comparison bars, sweep curves, topomaps, channel rankings
 │
 ├── LICENSES/
-│   └── meegkit-BSD-3.txt               # required attribution for the TRCA port
+│   └── meegkit-BSD-3.txt               # BSD-3 attribution for the TRCA port
 │
-├── presentation/                       # slide assets (gitkept; populate as we draft)
-│
-└── references/                         # gitignored — third-party reference implementations
-    ├── fbcca_eugeneALU/                #   — reference for Chen 2015 FBCCA
-    └── meegkit/                        #   — source of the TRCA port (BSD-3)
+└── presentation/                       # slide assets (gitkept)
 ```
 
-## Team conventions
+## Quickstart
 
-- **`src/ssvep/` is the canonical pipeline.** Notebooks are exploratory
-  and disposable; production code lives in `src/`. If you write a
-  function in a notebook and use it twice, promote it to `src/ssvep/`.
-- **One owner per stage notebook.** Put your name in the first markdown
-  cell. If two people need the same stage, fork as
-  `03_cca_baseline_<initials>.ipynb`. Never co-edit a single `.ipynb` —
-  Jupyter merge conflicts are unfixable under hackathon time pressure.
-- **Clear outputs before saving** for any notebook you commit:
-  `Kernel → Restart & Clear Output`. Keeps diffs reviewable.
-  (Notebooks 01, 02, 07, 08, 09 are exceptions — their executed
-  outputs are part of the deliverable.)
-- **Always import as `from ssvep import ...`**. Never `sys.path.insert`.
-  This requires `pip install -e .` was run during setup.
-- **Use `RANDOM_SEED = 42`** from `ssvep` for any stochastic step so
-  teammates see the same numbers.
-- Drop data only into `data/raw/`. Everything under `data/` except
-  `data/README.md` is gitignored.
-- The `references/` directory holds third-party reference
-  implementations (meegkit's TRCA, eugeneALU's FBCCA) for cross-check
-  during porting; it is **gitignored**. Each teammate clones what they
-  need locally. The actual ports live in `src/ssvep/classifiers/` with
-  attribution in `LICENSES/`.
+```bash
+git clone https://github.com/ishanvirc/BR4IN_SSVEP.git
+cd BR4IN_SSVEP
 
-## References
+# Conda (recommended)
+conda env create -f environment.yml && conda activate br41n-ssvep && pip install -e .
+# OR pure pip
+python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && pip install -e .
 
-- **Guger et al. 2012** — *How many people could use an SSVEP BCI?*
-  Frontiers in Neuroscience 6:169. Bundled in `data/raw/`. Describes
-  the g.tec hardware/pipeline that produced CH11.
-- **Lin et al. 2007** — *Frequency Recognition Based on Canonical
-  Correlation Analysis for SSVEP-Based BCIs.* IEEE Trans. Biomed. Eng.
-  54(6):1172–1176. The CCA paper.
-- **Chen et al. 2015** — *Filter bank canonical correlation analysis
-  for implementing a high-speed SSVEP-based brain-computer interface.*
-  J. Neural Eng. 12:046008. The FBCCA paper.
-- **Nakanishi et al. 2018** — *Enhancing Detection of SSVEPs for a
-  High-Speed Brain Speller Using Task-Related Component Analysis.*
-  IEEE Trans. Biomed. Eng. 65(1):104–112. The TRCA paper.
-- **Wolpaw et al. 1998** — *EEG-based communication: improved accuracy
-  by response verification.* IEEE Trans. Rehabil. Eng. 6(3):326–333.
-  ITR formula.
+# Smoke check (works without data/raw/)
+python scripts/run_baseline.py --synthetic
+pytest tests/ -q                                 # 16 passed
+
+# Headline classifier comparison (requires data/raw/*.mat)
+python scripts/compare_classifiers.py --window 3.0 --harmonics 2
+# Within-subject protocol (Nakanishi 2018):
+python scripts/compare_classifiers.py --protocol within_subject --window 3.0 --harmonics 2
+
+# CCA window-length sweep
+python scripts/sweep_cca_windows.py
+
+# CH11 sanity
+python scripts/verify_ch11.py
+```
+
+`pip install -e .` is what makes `from ssvep import ...` work
+everywhere (notebooks, scripts, tests). Python 3.11+ required per
+[pyproject.toml](pyproject.toml).
+
+The raw `.mat` files (`subject_{1,2}_fvep_led_training_{1,2}.mat`) are
+distributed by g.tec at the hackathon kickoff and not included in
+this repo. See [data/README.md](data/README.md) for the schema.
+
+## Notebooks
+
+Read in order. Each notebook is a thin pedagogical wrapper around the
+`src/ssvep/` and `scripts/` APIs — none of them reimplement the
+algorithms. Full index in [notebooks/README.md](notebooks/README.md).
+
+| # | Notebook | What it shows |
+|---|---|---|
+| 01 | data_exploration | Raw `.mat` schema, trial structure, CH11 → stim-freq mapping recovery |
+| 02 | preprocessing (VT) | Bandpass / notch / window parameter scan; chosen defaults |
+| 03 | cca_baseline | CCA against canonical sin/cos refs; cross-subject LOBO = 0.838 |
+| 04 | fbcca | 5-sub-band Chebyshev-I filter bank, squared-ρ aggregation; LOBO = 0.950 |
+| 05 | trca | Eigenvalue solve, ensemble filters; documented negative result |
+| 06 | comparison_and_itr | Full ablation + Wolpaw ITR sweep across windows |
+| 07 | demo | Clean demo for presentation |
+| 08 | channel_selection (Yuki) | Per-subject SNR-ranked top-4; cross-subject channel transfer test |
+| 09 | topomap_vt (VT) | Topomap visualizations; channel-stability heatmaps |
+
+All notebooks are committed with executed outputs — read them on
+GitHub without running locally.
+
+## Results artifacts
+
+Key files in [results/](results/) (full index in
+[results/README.md](results/README.md)):
+
+| File | Contains |
+|---|---|
+| [audit_report.md](results/audit_report.md) | Verification source of truth — every load-bearing number traced back to raw `.mat` |
+| [within_subject_evaluation.md](results/within_subject_evaluation.md) | Why within-subject LOBO is the protocol the literature uses; per-subject means |
+| [trca_methodology_note.md](results/trca_methodology_note.md) | TRCA negative-result mechanism analysis (3 converging causes) |
+| [channel_selection.md](results/channel_selection.md) | Yuki's per-subject SNR analysis |
+| [tables/comparison_3s.csv](results/tables/comparison_3s.csv) | Headline cross-subject 3 s comparison row-by-row |
+| [tables/comparison_within_subject_3s.csv](results/tables/comparison_within_subject_3s.csv) | Same under within-subject LOBO |
+| [tables/cca_window_sweep_nested.csv](results/tables/cca_window_sweep_nested.csv) | CCA at 10 window lengths, with per-fold nested channel selection |
+| [figures/comparison.png](results/figures/comparison.png) | Headline bar chart (embedded above) |
+| [figures/cca_window_sweep_with_nested.png](results/figures/cca_window_sweep_with_nested.png) | 3-line CCA window sweep (slide-ready) |
+| [figures/channel_stability_topomap_*.png](results/figures/) | VT's channel-stability topomaps |
+
+## Methodology notes
+
+If you only read three things in this repo, read these:
+
+1. [results/audit_report.md](results/audit_report.md) — verifies every published number end-to-end. Independent re-derivation matches CSV to ≤ 0.001 across all 80 trials, both protocols, all 4 windows, both harmonic counts.
+2. [results/within_subject_evaluation.md](results/within_subject_evaluation.md) — explains why within-subject LOBO is the methodologically correct protocol, and why FBCCA wins under both protocols.
+3. [results/trca_methodology_note.md](results/trca_methodology_note.md) — the TRCA negative result is not a bug; it's a documented property of the data regime relative to Nakanishi 2018's published thresholds.
+
+## Citations
+
+- **Lin, Z., Zhang, C., Wu, W., & Gao, X. (2007).** *Frequency Recognition Based on Canonical Correlation Analysis for SSVEP-Based BCIs.* IEEE Trans. Biomed. Eng. 54(6):1172–1176.
+- **Chen, X., Wang, Y., Gao, S., Jung, T.-P., & Gao, X. (2015).** *Filter bank canonical correlation analysis for implementing a high-speed SSVEP-based brain-computer interface.* J. Neural Eng. 12:046008.
+- **Nakanishi, M., Wang, Y., Chen, X., Wang, Y.-T., Gao, X., & Jung, T.-P. (2018).** *Enhancing Detection of SSVEPs for a High-Speed Brain Speller Using Task-Related Component Analysis.* IEEE Trans. Biomed. Eng. 65(1):104–112.
+- **Guger, C., Allison, B. Z., Großwindhager, B., Prückl, R., Hintermüller, C., Kapeller, C., Bruckner, M., Krausz, G., & Edlinger, G. (2012).** *How Many People Could Use an SSVEP BCI?* Front. Neurosci. 6:169.
+- **Wolpaw, J. R., et al. (1998).** *EEG-based communication: improved accuracy by response verification.* IEEE Trans. Rehabil. Eng. 6(3):326–333. (ITR formula.)
+
+## License and acknowledgments
+
+This repository's original code is released under the **MIT License** —
+see [LICENSE](LICENSE).
+
+The TRCA implementation in [src/ssvep/classifiers/trca.py](src/ssvep/classifiers/trca.py)
+is a port of [meegkit](https://github.com/nbara/python-meegkit)'s
+standalone `_trca` function and remains under its original BSD 3-Clause
+license — full attribution in [LICENSES/meegkit-BSD-3.txt](LICENSES/meegkit-BSD-3.txt).
+
+The hackathon dataset was distributed by **g.tec medical engineering
+GmbH** at the BR41N.IO 2026 Spring School Hackathon. The Guger et al.
+2012 paper bundled in [data/raw/](data/raw/) describes the g.USBamp
+hardware and live LDA pipeline that produced the CH11 reference signal
+used as the SOTA benchmark in this work.
+
+Team: Ishanvir Choongh, Yuki, VT.
