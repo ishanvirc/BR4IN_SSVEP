@@ -1,25 +1,24 @@
-# data/ — dataset provenance and structure
+# Dataset provenance and structure
 
 `data/raw/` and `data/processed/` are gitignored. This file is the only
 thing under `data/` that is committed.
 
 ## Dataset name and source
 
-**BR41N.IO 2026 Spring School Hackathon — SSVEP Data Analysis project.**
+**BR41N.IO 2026 Spring School Hackathon / SSVEP Data Analysis project.**
 Provided by g.tec medical engineering GmbH at the kickoff session.
 Dataset dropped into `data/raw/` on **2026-04-25**.
 
 ## Subjects and sessions
 
 - 2 healthy adult subjects (anonymized as `subject_1`, `subject_2`).
-- 2 training sessions per subject — `training_1`, `training_2`.
+- 2 training sessions per subject: `training_1`, `training_2`.
 - 4 `.mat` files total: `subject_{1,2}_fvep_led_training_{1,2}.mat`.
 
 ## Hardware
 
 g.USBamp biosignal amplifier (per Guger et al. 2012, "How many people
-could use an SSVEP BCI?" — bundled in this folder as
-`How_many_people_could_use_an_SSVEP_BCI.pdf`). Active electrodes,
+could use an SSVEP BCI?" bundled in this folder as `How_many_people_could_use_an_SSVEP_BCI.pdf`). Active electrodes,
 reference at right earlobe, ground at FPz.
 
 ## Channel layout
@@ -36,7 +35,7 @@ reference at right earlobe, ground at FPz.
 | CH8  | Oz (EEG) |
 | CH9  | O2 (EEG) |
 | CH10 | Trigger (stim freq in Hz; 0 when off) |
-| CH11 | LDA classifier output (see "CH11 — g.tec LDA Classifier Output" below) |
+| CH11 | LDA classifier output (see "CH11, g.tec LDA Classifier Output" below) |
 
 EEG channel order is the assumed g.tec montage; confirm against
 `montage.png` in this folder before relying on CH-name → physical
@@ -54,14 +53,14 @@ electrode pairings.
 
 - 4 LEDs flickering at **9, 10, 12, 15 Hz**.
 - **20 trials per file**, balanced **5 per class** across the 4 frequencies.
-- **Trial duration:** 7.36 s (1884 samples). Fixed — no jitter.
-- **Inter-trial gap:** 3.14 s (804 samples). Fixed — no jitter.
+- **Trial duration:** 7.36 s (1884 samples). Fixed.
+- **Inter-trial gap:** 3.14 s (804 samples). Fixed.
 - Total active stim per file: 20 × 7.36 ≈ 147 s.
 
 Trial counts and timings inferred from CH10 transitions; see
 `notebooks/01_data_exploration.ipynb` cell 3.
 
-## CH11 — g.tec LDA Classifier Output
+## CH11: g.tec LDA Classifier Output
 
 CH11 contains g.tec's live LDA classifier predictions, recovered via
 permutation sweep over the 4! possible class-index → frequency mappings.
@@ -73,7 +72,7 @@ permutation sweep over the 4! possible class-index → frequency mappings.
 - Class 3 → 10 Hz
 - Class 4 → 9 Hz
 
-**Two accuracy numbers — both matter:**
+**Two accuracy numbers:**
 
 - **Per-sample accuracy: 0.677** across 48,402 scored samples (aggregate,
   best permutation). This number is diluted by sticky/latched values
@@ -81,7 +80,7 @@ permutation sweep over the 4! possible class-index → frequency mappings.
   **not** a fair representation of CH11's quality as a per-trial classifier.
 - **Per-trial accuracy: 0.872** across 39 of 80 trials evaluated (last 100
   samples per trial, majority vote, best-perm mapping). This is the
-  **BCI-relevant** number — one prediction per trial, mirroring how a real
+  **BCI-relevant** number, one prediction per trial, mirroring how a real
   speller would use CH11.
 
 **Coverage is the catch:** 41 of 80 trials (51%) have **no** LDA prediction
@@ -108,12 +107,9 @@ Reproduce with `python scripts/verify_ch11.py` (per-sample sweep) or
 
 ## References
 
-- **Guger et al. 2012** — "How many people could use an SSVEP BCI?" —
-  hardware/paradigm baseline. PDF: `How_many_people_could_use_an_SSVEP_BCI.pdf`.
-- **Chen et al. 2015** — Filter Bank CCA (FBCCA). To be implemented in
-  `src/ssvep/classifiers/fbcca.py`.
-- **Nakanishi et al. 2017** — Task-Related Component Analysis (TRCA).
-  To be implemented in `src/ssvep/classifiers/trca.py`.
+- **Guger et al. 2012**: "How many people could use an SSVEP BCI?". Hardware/paradigm baseline. 
+- **Chen et al. 2015** — Filter Bank CCA (FBCCA). To be implemented in `src/ssvep/classifiers/fbcca.py`.
+- **Nakanishi et al. 2017** — Task-Related Component Analysis (TRCA). To be implemented in `src/ssvep/classifiers/trca.py`.
 
 ## Files NOT in git
 
@@ -122,15 +118,6 @@ The `.mat` files, the Guger 2012 PDF, `montage.png`, and the
 teammate must download them from the hackathon Discord/Drive separately
 and drop them into `data/raw/`. This README assumes those files are
 already present.
-
-## Conventions
-
-- Drop incoming `.mat` files into `data/raw/` exactly as received.
-  **Never rename** the originals — keep them byte-identical to what the
-  organizers provided.
-- Filtered / epoched arrays go into `data/processed/` with a descriptive
-  name (e.g. `S01_bp6-50_notch50_epochs.npz`). Gitignored, so duplicates
-  across teammates aren't a problem.
 
 ## Provenance log
 
