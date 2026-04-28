@@ -108,8 +108,8 @@ Reproduce with `python scripts/verify_ch11.py` (per-sample sweep) or
 ## References
 
 - **Guger et al. 2012**: "How many people could use an SSVEP BCI?". Hardware/paradigm baseline. 
-- **Chen et al. 2015** — Filter Bank CCA (FBCCA). To be implemented in `src/ssvep/classifiers/fbcca.py`.
-- **Nakanishi et al. 2017** — Task-Related Component Analysis (TRCA). To be implemented in `src/ssvep/classifiers/trca.py`.
+- **Chen et al. 2015**: Filter Bank CCA (FBCCA). To be implemented in `src/ssvep/classifiers/fbcca.py`.
+- **Nakanishi et al. 2017**: Task-Related Component Analysis (TRCA). To be implemented in `src/ssvep/classifiers/trca.py`.
 
 ## Files NOT in git
 
@@ -121,7 +121,7 @@ already present.
 
 ## Provenance log
 
-- **2026-04-25** — Data dropped into `data/raw/` at kickoff. Schema
+- **2026-04-25**: Data dropped into `data/raw/` at kickoff. Schema
   confirmed; trial structure (20 × 7.36 s + 3.14 s gap, 5/class)
   characterized; CH11 → LDA mapping recovered (descending freq, 0.677
   aggregate accuracy). See `notebooks/01_data_exploration.ipynb`.
