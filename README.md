@@ -199,7 +199,7 @@ Key files in [results/](results/) (full index in
 
 | File | Contains |
 |---|---|
-| [audit_report.md](results/audit_report.md) | Verification source of truth — every load-bearing number traced back to raw `.mat` |
+| [audit_report.md](results/audit_report.md) | Verification source of truth. Every load-bearing number traced back to raw `.mat` |
 | [within_subject_evaluation.md](results/within_subject_evaluation.md) | Why within-subject LOBO is the protocol the literature uses; per-subject means |
 | [trca_methodology_note.md](results/trca_methodology_note.md) | TRCA negative-result mechanism analysis (3 converging causes) |
 | [channel_selection.md](results/channel_selection.md) | Yuki's per-subject SNR analysis |
