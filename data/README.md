@@ -109,7 +109,7 @@ Reproduce with `python scripts/verify_ch11.py` (per-sample sweep) or
 
 - **Guger et al. 2012**: "How many people could use an SSVEP BCI?". Hardware/paradigm baseline. 
 - **Chen et al. 2015**: Filter Bank CCA (FBCCA). To be implemented in `src/ssvep/classifiers/fbcca.py`.
-- **Nakanishi et al. 2017**: Task-Related Component Analysis (TRCA). To be implemented in `src/ssvep/classifiers/trca.py`.
+- **Nakanishi et al. 2018**: Task-Related Component Analysis (TRCA). To be implemented in `src/ssvep/classifiers/trca.py`.
 
 ## Files NOT in git
 
